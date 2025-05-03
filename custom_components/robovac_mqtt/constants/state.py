@@ -1,28 +1,6 @@
 from enum import Enum
 
 
-class EUFY_CLEAN_GET_STATE(str, Enum):
-    sleeping = 'stopped'
-    standby = 'docked'
-    recharge = 'docked'
-    running = 'cleaning'
-    cleaning = 'cleaning'
-    spot = 'spot_cleaning'
-    completed = 'docked'
-    charging = 'charging'
-    sleep = 'stopped'
-    go_home = 'docked'
-    fault = 'stopped'
-
-
-class EUFY_CLEAN_VACUUMCLEANER_STATE(str, Enum):
-    STOPPED = 'stopped'
-    CLEANING = 'cleaning'
-    SPOT_CLEANING = 'spot_cleaning'
-    DOCKED = 'docked'
-    CHARGING = 'charging'
-
-
 class EUFY_CLEAN_CLEAN_SPEED(str, Enum):
     NO_SUCTION = 'No_suction'
     STANDARD = 'Standard'
@@ -40,8 +18,8 @@ EUFY_CLEAN_NOVEL_CLEAN_SPEED = [
 ]
 
 EUFY_CLEAN_LEGACY_CLEAN_SPEED = [
-    EUFY_CLEAN_CLEAN_SPEED.NO_SUCTION,
-    EUFY_CLEAN_CLEAN_SPEED.BOOST_IQ
+    EUFY_CLEAN_CLEAN_SPEED.NO_SUCTION.value,
+    EUFY_CLEAN_CLEAN_SPEED.BOOST_IQ.value
 ]
 
 
