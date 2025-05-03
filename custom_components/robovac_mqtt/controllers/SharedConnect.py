@@ -55,14 +55,16 @@ class SharedConnect(Base):
     async def get_robovac_data(self):
         return self.robovac_data
 
-    async def get_clean_speed(self):
-        if isinstance(self.robovac_data.get('CLEAN_SPEED'), list) and len(self.robovac_data['CLEAN_SPEED']) == 1:
-            speed = int(self.robovac_data['CLEAN_SPEED'])
+async def get_clean_speed(self):
+    if isinstance(self.robovac_data.get('CLEAN_SPEED'), list) and len(self.robovac_data['CLEAN_SPEED']) == 1:
+        speed = int(self.robovac_data['CLEAN_SPEED'][0])
+        if 0 <= speed < len(EUFY_CLEAN_NOVEL_CLEAN_SPEED):  # Add bounds checking
             return EUFY_CLEAN_NOVEL_CLEAN_SPEED[speed].lower()
-        elif isinstance(self.robovac_data.get('CLEAN_SPEED'), str) and self.robovac_data['CLEAN_SPEED'].isdigit():
-            speed = int(self.robovac_data['CLEAN_SPEED'])
+    elif isinstance(self.robovac_data.get('CLEAN_SPEED'), str) and self.robovac_data['CLEAN_SPEED'].isdigit():
+        speed = int(self.robovac_data['CLEAN_SPEED'])
+        if 0 <= speed < len(EUFY_CLEAN_NOVEL_CLEAN_SPEED):  # Add bounds checking
             return EUFY_CLEAN_NOVEL_CLEAN_SPEED[speed].lower()
-        return self.robovac_data.get('CLEAN_SPEED', 'standard').lower()
+    return self.robovac_data.get('CLEAN_SPEED', 'standard').lower()
 
     async def get_control_response(self) -> ModeCtrlResponse | None:
         try:
@@ -169,13 +171,17 @@ class SharedConnect(Base):
         except Exception as error:
             _LOGGER.error(error)
 
-    async def set_clean_speed(self, clean_speed: EUFY_CLEAN_CLEAN_SPEED):
-        try:
-            set_clean_speed = [s.lower() for s in EUFY_CLEAN_NOVEL_CLEAN_SPEED].index(clean_speed.lower())
-            _LOGGER.debug('Setting clean speed to:', set_clean_speed, EUFY_CLEAN_NOVEL_CLEAN_SPEED, clean_speed)
-            return await self.send_command({self.dps_map['CLEAN_SPEED']: set_clean_speed})
-        except Exception as error:
-            _LOGGER.error(error)
+async def set_clean_speed(self, clean_speed: EUFY_CLEAN_CLEAN_SPEED):
+    try:
+        set_clean_speed_index = [s.lower() for s in EUFY_CLEAN_NOVEL_CLEAN_SPEED].index(clean_speed.lower())
+        _LOGGER.debug('Setting clean speed to:', set_clean_speed_index, EUFY_CLEAN_NOVEL_CLEAN_SPEED, clean_speed)
+        return await self.send_command({self.dps_map['CLEAN_SPEED']: set_clean_speed_index})
+    except ValueError:
+        _LOGGER.warning(f"Invalid clean speed requested: {clean_speed}")
+        return None  # Or handle the error as appropriate
+    except Exception as error:
+        _LOGGER.error(error)
+        return None
 
     async def auto_clean(self):
         value = encode(ModeCtrlRequest, {'auto_clean': {'clean_times': 1}})
