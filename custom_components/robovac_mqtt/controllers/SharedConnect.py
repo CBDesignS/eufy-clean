@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 from typing import Any, Callable
 
@@ -30,10 +31,22 @@ class SharedConnect(Base):
         self.device_model_desc = EUFY_CLEAN_DEVICES.get(self.device_model, '') or self.device_model
         self.config = {}
         self._update_listeners = []
+        self._last_raw_dps = {}  # Store raw DPS data for analysis
 
     _update_listeners: list[Callable[[], None]]
 
     async def _map_data(self, dps):
+        # Store original raw DPS data for analysis
+        self._last_raw_dps = dps.copy()
+        
+        # Discover potential water level DPS codes
+        potential_water = await self.discover_water_level_dps(dps)
+        if potential_water and self.debug_log:
+            _LOGGER.info("=== POTENTIAL WATER LEVEL DPS CODES ===")
+            for item in potential_water:
+                _LOGGER.info(f"DPS {item['dps_code']}: {item['value']} ({item['reason']})")
+        
+        # Continue with normal mapping
         for key, value in dps.items():
             mapped_keys = [k for k, v in self.dps_map.items() if v == key]
             for mapped_key in mapped_keys:
@@ -41,6 +54,18 @@ class SharedConnect(Base):
 
         if self.debug_log:
             _LOGGER.debug('mappedData', self.robovac_data)
+            # Log unknown DPS values that might contain water level
+            unknown_dps = {}
+            for key, value in dps.items():
+                if key not in self.dps_map.values():
+                    unknown_dps[key] = value
+            
+            if unknown_dps:
+                _LOGGER.debug('=== UNKNOWN DPS VALUES (potential water level data) ===')
+                _LOGGER.debug(json.dumps(unknown_dps, indent=2, default=str))
+
+        # Explore specific areas that might contain water level
+        await self._explore_potential_water_data()
 
         await self.get_control_response()
         for listener in self._update_listeners:
@@ -53,6 +78,74 @@ class SharedConnect(Base):
                     listener()
             except Exception as error:
                 _LOGGER.error(error)
+
+    async def _explore_potential_water_data(self):
+        """Explore areas where water level data might be hiding"""
+        
+        # Check ACCESSORIES_STATUS - most likely place for water tank info
+        if 'ACCESSORIES_STATUS' in self.robovac_data:
+            try:
+                _LOGGER.debug('=== EXPLORING ACCESSORIES_STATUS ===')
+                accessories_raw = self.robovac_data['ACCESSORIES_STATUS']
+                _LOGGER.debug(f"Raw accessories data: {accessories_raw}")
+                
+                # Try to decode if it's protobuf
+                if isinstance(accessories_raw, (bytes, str)):
+                    try:
+                        # You might need to import the right protobuf class
+                        # from ..proto.cloud.accessories_pb2 import AccessoriesStatus
+                        # decoded = decode(AccessoriesStatus, accessories_raw)
+                        # _LOGGER.debug(f"Decoded accessories: {decoded}")
+                        pass
+                    except Exception as e:
+                        _LOGGER.debug(f"Could not decode accessories as protobuf: {e}")
+                        
+            except Exception as e:
+                _LOGGER.error(f"Error exploring accessories status: {e}")
+        
+        # Check CLEANING_STATISTICS - might include consumable levels
+        if 'CLEANING_STATISTICS' in self.robovac_data:
+            try:
+                _LOGGER.debug('=== EXPLORING CLEANING_STATISTICS ===')
+                stats_raw = self.robovac_data['CLEANING_STATISTICS']
+                _LOGGER.debug(f"Raw cleaning statistics: {stats_raw}")
+                
+                # Try to decode statistics
+                if isinstance(stats_raw, (bytes, str)):
+                    try:
+                        # You might need the right protobuf class
+                        # from ..proto.cloud.statistics_pb2 import CleaningStatistics
+                        # decoded = decode(CleaningStatistics, stats_raw)
+                        # _LOGGER.debug(f"Decoded statistics: {decoded}")
+                        pass
+                    except Exception as e:
+                        _LOGGER.debug(f"Could not decode statistics as protobuf: {e}")
+                        
+            except Exception as e:
+                _LOGGER.error(f"Error exploring cleaning statistics: {e}")
+        
+        # Check CLEANING_PARAMETERS - might include water settings
+        if 'CLEANING_PARAMETERS' in self.robovac_data:
+            try:
+                _LOGGER.debug('=== EXPLORING CLEANING_PARAMETERS ===')
+                params_raw = self.robovac_data['CLEANING_PARAMETERS']
+                _LOGGER.debug(f"Raw cleaning parameters: {params_raw}")
+                
+                # We know this decodes to CleanParamRequest/Response
+                clean_params_req = await self.get_clean_params_request()
+                clean_params_res = await self.get_clean_params_response()
+                
+                _LOGGER.debug(f"Clean params request: {clean_params_req}")
+                _LOGGER.debug(f"Clean params response: {clean_params_res}")
+                
+                # Check if there are water-related fields
+                if hasattr(clean_params_req, 'clean_param'):
+                    _LOGGER.debug(f"Clean param details: {clean_params_req.clean_param}")
+                    if hasattr(clean_params_req.clean_param, 'mop_mode'):
+                        _LOGGER.debug(f"Mop mode found: {clean_params_req.clean_param.mop_mode}")
+                        
+            except Exception as e:
+                _LOGGER.error(f"Error exploring cleaning parameters: {e}")
 
     def add_listener(self, listener: Callable[[], None]):
         """Fixed: Changed type annotation to match actual usage"""
@@ -95,6 +188,68 @@ class SharedConnect(Base):
         
         # Default fallback
         return 'standard'
+
+    async def get_water_level(self):
+        """Get water level - will need to be updated once DPS code is found"""
+        
+        # Method 1: Check if we've identified the water level DPS
+        # Once you find the correct DPS code, add it to dps_map and uncomment:
+        # water_level_raw = self.robovac_data.get('WATER_LEVEL')
+        # if water_level_raw is not None:
+        #     return int(water_level_raw)
+        
+        # Method 2: Check accessories status for embedded water data
+        try:
+            accessories_raw = self.robovac_data.get('ACCESSORIES_STATUS')
+            if accessories_raw:
+                # Try to decode and look for water data
+                # This would need the correct protobuf definition
+                pass
+        except Exception as e:
+            _LOGGER.error(f"Error getting water level from accessories: {e}")
+        
+        # Method 3: Manual inspection of unknown DPS codes
+        if hasattr(self, '_last_raw_dps'):
+            potential_codes = await self.discover_water_level_dps(self._last_raw_dps)
+            if potential_codes:
+                _LOGGER.info("Potential water level data found - check logs for DPS codes")
+                # You can manually return a specific DPS value here for testing:
+                # return self._last_raw_dps.get('SUSPECTED_DPS_CODE', 0)
+        
+        return None  # Return None until water level DPS is identified
+    
+    async def get_water_tank_status(self):
+        """Get water tank status (present/absent, full/empty)"""
+        
+        # This would also need the correct DPS mapping
+        # Once found, add 'WATER_TANK_STATUS': 'XXX' to dps_map
+        
+        tank_status_raw = self.robovac_data.get('WATER_TANK_STATUS')
+        if tank_status_raw is not None:
+            if isinstance(tank_status_raw, bool):
+                return 'present' if tank_status_raw else 'absent'
+            elif isinstance(tank_status_raw, int):
+                # Different manufacturers use different codes
+                status_map = {0: 'empty', 1: 'low', 2: 'medium', 3: 'full'}
+                return status_map.get(tank_status_raw, 'unknown')
+        
+        return 'unknown'
+
+    # Check for water level in all possible locations
+    async def discover_all_dps_codes(self):
+        """Log all DPS codes to help identify water level mapping"""
+        _LOGGER.info("=== ALL KNOWN DPS MAPPINGS ===")
+        for key, dps_code in self.dps_map.items():
+            value = self.robovac_data.get(key, 'NOT_AVAILABLE')
+            _LOGGER.info(f"{key} (DPS {dps_code}): {value}")
+        
+        _LOGGER.info("=== SUGGEST ADDING THESE DPS MAPPINGS ===")
+        _LOGGER.info("# Add these to dps_map in Base.py if water level is found:")
+        _LOGGER.info("# 'WATER_LEVEL': 'XXX',  # Replace XXX with actual DPS code")
+        _LOGGER.info("# 'WATER_TANK_STATUS': 'XXX',")
+        _LOGGER.info("# 'MOP_WATER_LEVEL': 'XXX',")
+        
+        return self.robovac_data
 
     async def get_control_response(self) -> ModeCtrlResponse | None:
         try:
