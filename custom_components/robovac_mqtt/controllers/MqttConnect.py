@@ -12,7 +12,6 @@ from paho.mqtt import client as mqtt
 from ..controllers.Login import EufyLogin
 from ..utils import sleep
 from .SharedConnect import SharedConnect
-from ..accessory_decoder import AccessoryDecoder
 
 _LOGGER = logging.getLogger(__name__)
 
