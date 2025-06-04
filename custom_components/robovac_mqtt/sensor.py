@@ -92,6 +92,47 @@ class RobovacBatterySensor(SensorEntity):
             self.robovac.add_listener(_threadsafe_update)
 
     @property
+    def extra_state_attributes(self) -> dict:
+        attrs = {}
+        if hasattr(self.robovac, 'get_accessories_data'):
+            try:
+                accessories_data = self.robovac.get_accessories_data()
+                if accessories_data and self.accessory_key in accessories_data:
+                    accessory_info = accessories_data[self.accessory_key]
+                    attrs.update({
+                        "max_hours": accessory_info.get('max_hours', 0),
+                        "percentage": accessory_info.get('percentage', 0),
+                        "is_reset": accessory_info.get('is_reset', False),
+                    })
+            except Exception as e:
+                _LOGGER.debug("Could not get accessory attributes: %s", e)
+        return attrs
+
+    async def async_update(self) -> None:
+        try:
+            if hasattr(self.robovac, 'get_accessories_data'):
+                accessories_data = self.robovac.get_accessories_data()
+                if accessories_data and self.accessory_key in accessories_data:
+                    accessory_info = accessories_data[self.accessory_key]
+                    hours_used = accessory_info.get('hours_used', 0)
+                    
+                    # Only reset to 0 if accessory was actually reset
+                    if accessory_info.get('is_reset', False):
+                        self._attr_native_value = 0
+                    else:
+                        self._attr_native_value = hours_used
+                    
+                    self._attr_available = True
+                else:
+                    self._attr_available = False
+            else:
+                self._attr_available = False
+        except Exception as e:
+            _LOGGER.error("Error updating accessory hours sensor %s: %s", self.accessory_key, e)
+            self._attr_available = False.create_task(self.async_update_ha_state(force_refresh=True))
+            self.robovac.add_listener(_threadsafe_update)
+
+    @property
     def native_value(self):
         return self._attr_native_value
 
