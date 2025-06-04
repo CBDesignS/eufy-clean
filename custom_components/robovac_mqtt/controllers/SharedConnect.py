@@ -17,6 +17,7 @@ from ..proto.cloud.error_code_pb2 import ErrorCode
 from ..proto.cloud.work_status_pb2 import WorkStatus
 from ..utils import decode, encode, encode_message
 from .Base import Base
+from ..accessory_decoder import AccessoryDecoder
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -30,6 +31,10 @@ class SharedConnect(Base):
         self.device_model_desc = EUFY_CLEAN_DEVICES.get(self.device_model, '') or self.device_model
         self.config = {}
         self._update_listeners = []
+        
+        # NEW: Add accessory decoder support
+        self.accessory_decoder = AccessoryDecoder()
+        self._accessories_data = {}
 
     _update_listeners: list[Callable[[], None]]
 
@@ -39,24 +44,91 @@ class SharedConnect(Base):
             for mapped_key in mapped_keys:
                 self.robovac_data[mapped_key] = value
 
+        # NEW: Look for accessories data
+        await self._process_accessories_data(dps)
+
         if self.debug_log:
             _LOGGER.debug('mappedData', self.robovac_data)
 
         await self.get_control_response()
+        
+        # NEW: Call notify_listeners instead of directly calling listeners
+        self.notify_listeners()
+
+    # NEW: Process accessories data from incoming MQTT data
+    async def _process_accessories_data(self, dps):
+        """Process accessories data from incoming MQTT messages."""
+        accessories_raw = None
+        
+        # Look for accessories data in the incoming data
+        # Based on your debug logs, look for various possible key patterns
+        if isinstance(dps, dict):
+            for key, value in dps.items():
+                key_str = str(key).lower()
+                # Check for common patterns that might contain accessories data
+                if ('accessor' in key_str or 
+                    'component' in key_str or 
+                    'maintenance' in key_str or
+                    'part' in key_str or
+                    'consumable' in key_str):
+                    accessories_raw = value
+                    _LOGGER.debug("=== EXPLORING ACCESSORIES_STATUS ===")
+                    _LOGGER.debug("Raw accessories data: %s", accessories_raw)
+                    break
+                
+                # Also check if the value looks like base64 accessories data
+                # (your data starts with characters like 'PAo6', 'Ogo4', etc.)
+                if (isinstance(value, str) and 
+                    len(value) > 30 and 
+                    any(value.startswith(prefix) for prefix in ['PAo6', 'Ogo4', 'OAo2', 'Ngo0', 'NAoy', 'MgowC', 'MAou'])):
+                    accessories_raw = value
+                    _LOGGER.debug("=== EXPLORING ACCESSORIES_STATUS ===")
+                    _LOGGER.debug("Raw accessories data: %s", accessories_raw)
+                    break
+        
+        # If we found accessories data, decode it
+        if accessories_raw and isinstance(accessories_raw, str):
+            self.update_accessories_data(accessories_raw)
+
+    # NEW: Add accessory support methods
+    def get_accessories_data(self) -> dict:
+        """Get decoded accessories data."""
+        return self._accessories_data
+    
+    def update_accessories_data(self, raw_accessories_data: str):
+        """Update accessories data from raw protobuf."""
+        try:
+            if raw_accessories_data:
+                self._accessories_data = self.accessory_decoder.decode_accessories_data(raw_accessories_data)
+                _LOGGER.debug("Updated accessories data: %s", self._accessories_data)
+        except Exception as e:
+            _LOGGER.error("Error updating accessories data: %s", e)
+            self._accessories_data = {}
+
+    # NEW: Improved listener notification
+    def notify_listeners(self):
+        """Notify all listeners that data has been updated."""
         for listener in self._update_listeners:
             try:
                 _LOGGER.debug(f'Calling listener {listener.__name__ if hasattr(listener, "__name__") else "anonymous"}')
-                # Fixed: Handle both sync and async listeners
+                # Handle both sync and async listeners
                 if asyncio.iscoroutinefunction(listener):
-                    await listener()
+                    # For async listeners, schedule them to run
+                    asyncio.create_task(listener())
                 else:
                     listener()
             except Exception as error:
-                _LOGGER.error(error)
+                _LOGGER.error("Error calling listener: %s", error)
 
     def add_listener(self, listener: Callable[[], None]):
-        """Fixed: Changed type annotation to match actual usage"""
+        """Add a listener function to be called when data updates."""
         self._update_listeners.append(listener)
+
+    # NEW: Add remove_listener method for completeness
+    def remove_listener(self, listener: Callable[[], None]):
+        """Remove a listener function."""
+        if listener in self._update_listeners:
+            self._update_listeners.remove(listener)
 
     async def get_robovac_data(self):
         return self.robovac_data
