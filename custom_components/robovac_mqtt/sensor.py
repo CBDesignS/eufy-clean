@@ -147,7 +147,7 @@ class RobovacAccessoryPercentageSensor(SensorEntity):
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = PERCENTAGE
     _attr_suggested_display_precision = 0
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_category = None  # None makes it available for automations
 
     def __init__(self, robovac, accessory_key: str, config: Dict[str, Any]):
         super().__init__()
@@ -176,17 +176,29 @@ class RobovacAccessoryPercentageSensor(SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict:
+        """Add automation-friendly attributes."""
         attrs = {}
         if hasattr(self.robovac, 'get_accessories_data'):
             try:
                 accessories_data = self.robovac.get_accessories_data()
                 if accessories_data and self.accessory_key in accessories_data:
                     accessory_info = accessories_data[self.accessory_key]
+                    percentage = accessory_info.get('percentage', 0)
+                    max_hours = accessory_info.get('max_hours', 0)
+                    hours_used = accessory_info.get('hours_used', 0)
+                    
                     attrs.update({
-                        "hours_used": accessory_info.get('hours_used', 0),
-                        "max_hours": accessory_info.get('max_hours', 0),
+                        "hours_used": hours_used,
+                        "max_hours": max_hours,
                         "is_reset": accessory_info.get('is_reset', False),
-                        "needs_replacement": accessory_info.get('needs_replacement', False),
+                        "needs_replacement": percentage >= 90,
+                        "replacement_soon": percentage >= 80,
+                        "status": "reset" if accessory_info.get('is_reset', False) else 
+                                 "replace_now" if percentage >= 90 else
+                                 "replace_soon" if percentage >= 80 else
+                                 "good",
+                        "hours_remaining": max(0, max_hours - hours_used) if max_hours > 0 else 0,
+                        "days_remaining": max(0, (max_hours - hours_used) // 24) if max_hours > 0 else 0,
                     })
             except Exception as e:
                 _LOGGER.debug("Could not get accessory attributes: %s", e)
@@ -226,7 +238,7 @@ class RobovacAccessoryHoursSensor(SensorEntity):
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
     _attr_native_unit_of_measurement = UnitOfTime.HOURS  # Fixed: Use UnitOfTime.HOURS instead of TIME_HOURS
     _attr_suggested_display_precision = 0
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_category = None  # None makes it available for automations
 
     def __init__(self, robovac, accessory_key: str, config: Dict[str, Any]):
         super().__init__()
@@ -255,16 +267,29 @@ class RobovacAccessoryHoursSensor(SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict:
+        """Add automation-friendly attributes."""
         attrs = {}
         if hasattr(self.robovac, 'get_accessories_data'):
             try:
                 accessories_data = self.robovac.get_accessories_data()
                 if accessories_data and self.accessory_key in accessories_data:
                     accessory_info = accessories_data[self.accessory_key]
+                    percentage = accessory_info.get('percentage', 0)
+                    max_hours = accessory_info.get('max_hours', 0)
+                    hours_used = accessory_info.get('hours_used', 0)
+                    
                     attrs.update({
-                        "max_hours": accessory_info.get('max_hours', 0),
-                        "percentage": accessory_info.get('percentage', 0),
+                        "max_hours": max_hours,
+                        "percentage": percentage,
                         "is_reset": accessory_info.get('is_reset', False),
+                        "needs_replacement": percentage >= 90,
+                        "replacement_soon": percentage >= 80,
+                        "status": "reset" if accessory_info.get('is_reset', False) else 
+                                 "replace_now" if percentage >= 90 else
+                                 "replace_soon" if percentage >= 80 else
+                                 "good",
+                        "hours_remaining": max(0, max_hours - hours_used) if max_hours > 0 else 0,
+                        "days_remaining": max(0, (max_hours - hours_used) // 24) if max_hours > 0 else 0,
                     })
             except Exception as e:
                 _LOGGER.debug("Could not get accessory attributes: %s", e)
