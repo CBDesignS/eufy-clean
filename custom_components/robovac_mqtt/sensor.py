@@ -46,7 +46,7 @@ def create_accessory_sensors(robovac) -> list:
     decoder = AccessoryDecoder()
     
     for accessory_key, config in decoder.ACCESSORY_CONFIGS.items():
-        # Percentage sensor
+        # Percentage sensor (remaining life)
         percentage_sensor = RobovacAccessoryPercentageSensor(
             robovac, accessory_key, config
         )
@@ -142,7 +142,7 @@ class RobovacBatterySensor(SensorEntity):
             self._attr_available = False
 
 class RobovacAccessoryPercentageSensor(SensorEntity):
-    """Sensor for accessory usage percentage."""
+    """Sensor for accessory remaining life percentage (countdown from 100%)."""
 
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = PERCENTAGE
@@ -155,7 +155,7 @@ class RobovacAccessoryPercentageSensor(SensorEntity):
         self.accessory_key = accessory_key
         self.config = config
         self._attr_unique_id = f"{robovac.device_id}_{accessory_key}_percentage"
-        self._attr_name = f"{robovac.device_model_desc} {config['name']} Usage"
+        self._attr_name = f"{robovac.device_model_desc} {config['name']} Remaining"  # Changed to "Remaining"
         self._attr_icon = config['icon']
         self._attr_native_value = None
         self._attr_available = True
@@ -183,7 +183,7 @@ class RobovacAccessoryPercentageSensor(SensorEntity):
                 accessories_data = self.robovac.get_accessories_data()
                 if accessories_data and self.accessory_key in accessories_data:
                     accessory_info = accessories_data[self.accessory_key]
-                    percentage = accessory_info.get('percentage', 0)
+                    percentage = accessory_info.get('percentage', 100)  # Default to 100% (new)
                     max_hours = accessory_info.get('max_hours', 0)
                     hours_used = accessory_info.get('hours_used', 0)
                     
@@ -191,14 +191,21 @@ class RobovacAccessoryPercentageSensor(SensorEntity):
                         "hours_used": hours_used,
                         "max_hours": max_hours,
                         "is_reset": accessory_info.get('is_reset', False),
-                        "needs_replacement": percentage >= 90,
-                        "replacement_soon": percentage >= 80,
+                        "needs_replacement": percentage <= 20,  # ≤20% remaining = needs replacement
+                        "replacement_soon": percentage <= 30,   # ≤30% remaining = replacement soon
                         "status": "reset" if accessory_info.get('is_reset', False) else 
-                                 "replace_now" if percentage >= 90 else
-                                 "replace_soon" if percentage >= 80 else
-                                 "good",
+                                 "replace_now" if percentage <= 10 else      # ≤10% = critical
+                                 "replace_soon" if percentage <= 20 else     # ≤20% = needs replacement  
+                                 "good" if percentage > 30 else              # >30% = good
+                                 "monitor",                                   # 20-30% = monitor
                         "hours_remaining": max(0, max_hours - hours_used) if max_hours > 0 else 0,
                         "days_remaining": max(0, (max_hours - hours_used) // 24) if max_hours > 0 else 0,
+                        "condition": "new" if percentage >= 90 else
+                                   "excellent" if percentage >= 70 else
+                                   "good" if percentage >= 50 else
+                                   "fair" if percentage >= 30 else
+                                   "poor" if percentage >= 10 else
+                                   "critical"
                     })
             except Exception as e:
                 _LOGGER.debug("Could not get accessory attributes: %s", e)
@@ -210,19 +217,22 @@ class RobovacAccessoryPercentageSensor(SensorEntity):
                 accessories_data = self.robovac.get_accessories_data()
                 if accessories_data and self.accessory_key in accessories_data:
                     accessory_info = accessories_data[self.accessory_key]
-                    self._attr_native_value = accessory_info.get('percentage', 0)
+                    percentage = accessory_info.get('percentage', 100)  # Default to 100% (new)
+                    self._attr_native_value = percentage
                     self._attr_available = True
                     
-                    # Update icon based on status
-                    percentage = accessory_info.get('percentage', 0)
+                    # Update icon based on remaining life
                     if accessory_info.get('is_reset', False):
-                        # Use a checkmark variant for reset accessories
+                        # Use a checkmark variant for reset accessories (100% new)
                         self._attr_icon = "mdi:check-circle"
-                    elif percentage >= 90:
-                        # Use alert variant for accessories needing replacement
+                    elif percentage <= 10:
+                        # Use alert variant for critical accessories (≤10% remaining)
                         self._attr_icon = "mdi:alert-circle"
+                    elif percentage <= 20:
+                        # Use warning variant for low accessories (≤20% remaining)
+                        self._attr_icon = "mdi:alert"
                     else:
-                        # Use normal icon
+                        # Use normal icon for good condition
                         self._attr_icon = self.config['icon']
                 else:
                     self._attr_available = False
@@ -233,10 +243,10 @@ class RobovacAccessoryPercentageSensor(SensorEntity):
             self._attr_available = False
 
 class RobovacAccessoryHoursSensor(SensorEntity):
-    """Sensor for accessory hours used."""
+    """Sensor for accessory hours used (counts up from 0)."""
 
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
-    _attr_native_unit_of_measurement = UnitOfTime.HOURS  # Fixed: Use UnitOfTime.HOURS instead of TIME_HOURS
+    _attr_native_unit_of_measurement = UnitOfTime.HOURS
     _attr_suggested_display_precision = 0
     _attr_entity_category = None  # None makes it available for automations
 
@@ -274,22 +284,24 @@ class RobovacAccessoryHoursSensor(SensorEntity):
                 accessories_data = self.robovac.get_accessories_data()
                 if accessories_data and self.accessory_key in accessories_data:
                     accessory_info = accessories_data[self.accessory_key]
-                    percentage = accessory_info.get('percentage', 0)
+                    percentage = accessory_info.get('percentage', 100)
                     max_hours = accessory_info.get('max_hours', 0)
                     hours_used = accessory_info.get('hours_used', 0)
                     
                     attrs.update({
                         "max_hours": max_hours,
-                        "percentage": percentage,
+                        "percentage_remaining": percentage,  # Renamed for clarity
                         "is_reset": accessory_info.get('is_reset', False),
-                        "needs_replacement": percentage >= 90,
-                        "replacement_soon": percentage >= 80,
+                        "needs_replacement": percentage <= 20,
+                        "replacement_soon": percentage <= 30,
                         "status": "reset" if accessory_info.get('is_reset', False) else 
-                                 "replace_now" if percentage >= 90 else
-                                 "replace_soon" if percentage >= 80 else
-                                 "good",
+                                 "replace_now" if percentage <= 10 else
+                                 "replace_soon" if percentage <= 20 else
+                                 "good" if percentage > 30 else
+                                 "monitor",
                         "hours_remaining": max(0, max_hours - hours_used) if max_hours > 0 else 0,
                         "days_remaining": max(0, (max_hours - hours_used) // 24) if max_hours > 0 else 0,
+                        "usage_rate": f"{(hours_used / max_hours * 100):.1f}%" if max_hours > 0 else "0%"
                     })
             except Exception as e:
                 _LOGGER.debug("Could not get accessory attributes: %s", e)
@@ -303,12 +315,8 @@ class RobovacAccessoryHoursSensor(SensorEntity):
                     accessory_info = accessories_data[self.accessory_key]
                     hours_used = accessory_info.get('hours_used', 0)
                     
-                    # Only reset to 0 if accessory was actually reset
-                    if accessory_info.get('is_reset', False):
-                        self._attr_native_value = 0
-                    else:
-                        self._attr_native_value = hours_used
-                    
+                    # Hours used always counts up from 0, resets to 0 when accessory is reset
+                    self._attr_native_value = hours_used
                     self._attr_available = True
                 else:
                     self._attr_available = False
