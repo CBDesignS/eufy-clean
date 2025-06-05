@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enhanced Eufy Robovac Data Decoder</title>
+    <style>
+        body {
+            font-family: 'Courier New', monospace;
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #0d1117;
+            color: #58a6ff;
+        }
+        .container {
+            background: #161b22;
+            border: 2px solid #58a6ff;
+            border-radius: 10px;
+            padding: 20px;
+            margin: 10px 0;
+            box-shadow: 0 0 20px rgba(88, 166, 255, 0.2);
+        }
+        .header {
+            text-align: center;
+            color: #f0f6fc;
+            margin-bottom: 20px;
+            text-shadow: 0 0 10px rgba(88, 166, 255, 0.5);
+        }
+        .data-section {
+            margin: 15px 0;
+            padding: 15px;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            background: #0d1117;
+        }
+        .label {
+            color: #ffa657;
+            font-weight: bold;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+        .data-string {
+            word-break: break-all;
+            background: #21262d;
+            padding: 12px;
+            border-radius: 6px;
+            font-size: 11px;
+            border-left: 4px solid #58a6ff;
+        }
+        .hex-display {
+            font-family: monospace;
+            font-size: 10px;
+            line-height: 1.6;
+            background: #0d1117;
+            padding: 10px;
+            border-radius: 6px;
+            overflow-x: auto;
+        }
+        .byte {
+            display: inline-block;
+            margin: 1px;
+            padding: 3px 5px;
+            border-radius: 3px;
+            font-weight: bold;
+        }
+        .changed { background: #da3633; color: #f0f6fc; }
+        .same { background: #30363d; color: #7d8590; }
+        .new { background: #238636; color: #f0f6fc; }
+        .missing { background: #fb8500; color: #0d1117; }
+        .analysis {
+            background: #0d1117;
+            border-left: 4px solid #58a6ff;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 6px;
+        }
+        .accessory-mapping {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+        .accessory {
+            background: #21262d;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #30363d;
+            transition: all 0.3s ease;
+        }
+        .accessory:hover {
+            border-color: #58a6ff;
+            box-shadow: 0 0 10px rgba(88, 166, 255, 0.3);
+        }
+        .accessory.reset {
+            border-color: #238636;
+            background: #0f2419;
+        }
+        .accessory.unchanged {
+            border-color: #da3633;
+            background: #2d1014;
+        }
+        button {
+            background: #238636;
+            color: #f0f6fc;
+            border: 1px solid #2ea043;
+            padding: 12px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            margin: 8px;
+            font-weight: bold;
+            transition: all 0.2s ease;
+        }
+        button:hover {
+            background: #2ea043;
+            box-shadow: 0 0 10px rgba(46, 160, 67, 0.4);
+        }
+        .comparison-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            background: #21262d;
+            border-radius: 6px;
+            overflow: hidden;
+        }
+        .comparison-table th,
+        .comparison-table td {
+            border: 1px solid #30363d;
+            padding: 10px;
+            text-align: center;
+            font-size: 11px;
+        }
+        .comparison-table th {
+            background: #161b22;
+            color: #ffa657;
+            font-weight: bold;
+        }
+        .state-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        .state-original { background: #da3633; }
+        .state-reset1 { background: #fb8500; }
+        .state-reset2 { background: #ffa657; }
+        .state-final { background: #238636; }
+        .timeline {
+            display: flex;
+            justify-content: space-between;
+            margin: 20px 0;
+            padding: 20px;
+            background: #21262d;
+            border-radius: 8px;
+            position: relative;
+        }
+        .timeline::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 10%;
+            right: 10%;
+            height: 2px;
+            background: linear-gradient(to right, #da3633, #fb8500, #ffa657, #238636);
+        }
+        .timeline-item {
+            text-align: center;
+            z-index: 1;
+            background: #161b22;
+            padding: 10px;
+            border-radius: 6px;
+            border: 2px solid;
+            min-width: 150px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="header">🤖 ENHANCED EUFY ROBOVAC PROTOCOL DECODER 🤖</h1>
+        
+        <div class="timeline">
+            <div class="timeline-item" style="border-color: #da3633;">
+                <div class="state-indicator state-original"></div>
+                <strong>ORIGINAL</strong><br>
+                <small>All accessories with usage</small>
+            </div>
+            <div class="timeline-item" style="border-color: #fb8500;">
+                <div class="state-indicator state-reset1"></div>
+                <strong>RESET 1</strong><br>
+                <small>Brush Guard & Sensors</small>
+            </div>
+            <div class="timeline-item" style="border-color: #ffa657;">
+                <div class="state-indicator state-reset2"></div>
+                <strong>RESET 2</strong><br>
+                <small>Side Brush partial</small>
+            </div>
+            <div class="timeline-item" style="border-color: #238636;">
+                <div class="state-indicator state-final"></div>
+                <strong>FINAL</strong><br>
+                <small>Side Brush fully reset</small>
+            </div>
+        </div>
+
+        <div class="data-section">
+            <div class="label">🔴 ORIGINAL DATA (All accessories with usage):</div>
+            <div class="data-string" id="original">PAo6CgIIKxICCCsaAggXIgIIKyoCCAoyAggjOgIIaVoCCBhiAggYagIIGHoCCBiKAQCgAciS1NvPp+GiGA==</div>
+            <small>61 bytes - Brush Guard: 64%, Sensors: 71%, Side Brush: 76%</small>
+        </div>
+
+        <div class="data-section">
+            <div class="label">🟠 AFTER RESET 1 (Brush Guard & Sensors reset):</div>
+            <div class="data-string" id="reset1">Ogo4CgIIKxICCCsaAggXIgAqAggKMgIIIzoCCGlaAggYYgIIGGoCCBh6AggYigEAoAGg4sy2nMf0ohg=</div>
+            <small>59 bytes - Brush Guard: 0%, Sensors: 0%, Side Brush: unchanged</small>
+        </div>
+
+        <div class="data-section">
+            <div class="label">🟡 AFTER RESET 2 (Side Brush partial reset):</div>
+            <div class="data-string" id="reset2">OAo2CgIIKxICCCsaAggXIgAqADICCCM6AghpWgIIGGICCBhqAggYegIIGIoBAKAByJzzqd/I9KIY</div>
+            <small>57 bytes - Side Brush beginning to reset</small>
+        </div>
+
+        <div class="data-section">
+            <div class="label">🟢 FINAL STATE (Side Brush fully reset):</div>
+            <div class="data-string" id="final">Ngo0CgASAggrGgIIFyIAKgAyAggjOgIIaVoCCBhiAggYagIIGHoCCBiKAQCgAZCKqYyCoPeiGA==</div>
+            <small>55 bytes - Side Brush: 0%</small>
+        </div>
+
+        <div style="text-align: center; margin: 20px 0;">
+            <button onclick="analyzeProtocol()">🧬 FULL PROTOCOL ANALYSIS</button>
+            <button onclick="compareAllStates()">⚡ COMPARE ALL STATES</button>
+            <button onclick="showAccessoryMapping()">🎯 ACCESSORY MAPPING</button>
+        </div>
+
+        <div id="results"></div>
+    </div>
+
+    <script>
+        const states = [
+            {
+                name: "ORIGINAL",
+                data: "PAo6CgIIKxICCCsaAggXIgIIKyoCCAoyAggjOgIIaVoCCBhiAggYagIIGHoCCBiKAQCgAciS1NvPp+GiGA==",
+                description: "All accessories with usage",
+                accessories: {
+                    "Brush Guard": "64% (77/120 hours)",
+                    "Sensors": "71% (25/35 hours)", 
+                    "Side Brush": "76% (137/180 hours)",
+                    "Mop Cloth": "80% (145/180 hours)",
+                    "Rolling Brush": "88% (317/360 hours)",
+                    "Filter": "93% (337/360 hours)"
+                },
+                color: "#da3633"
+            },
+            {
+                name: "RESET 1",
+                data: "Ogo4CgIIKxICCCsaAggXIgAqAggKMgIIIzoCCGlaAggYYgIIGGoCCBh6AggYigEAoAGg4sy2nMf0ohg=",
+                description: "Brush Guard & Sensors reset to 0%",
+                accessories: {
+                    "Brush Guard": "0% ✅ RESET",
+                    "Sensors": "0% ✅ RESET",
+                    "Side Brush": "76% (unchanged)",
+                    "Mop Cloth": "80% (unchanged)",
+                    "Rolling Brush": "88% (unchanged)",
+                    "Filter": "93% (unchanged)"
+                },
+                color: "#fb8500"
+            },
+            {
+                name: "RESET 2",
+                data: "OAo2CgIIKxICCCsaAggXIgAqADICCCM6AghpWgIIGGICCBhqAggYegIIGIoBAKAByJzzqd/I9KIY",
+                description: "Side Brush beginning to reset",
+                accessories: {
+                    "Brush Guard": "0% (still reset)",
+                    "Sensors": "0% (still reset)",
+                    "Side Brush": "⏳ Resetting...",
+                    "Mop Cloth": "80% (unchanged)",
+                    "Rolling Brush": "88% (unchanged)",
+                    "Filter": "93% (unchanged)"
+                },
+                color: "#ffa657"
+            },
+            {
+                name: "FINAL",
+                data: "Ngo0CgASAggrGgIIFyIAKgAyAggjOgIIaVoCCBhiAggYagIIGHoCCBiKAQCgAZCKqYyCoPeiGA==",
+                description: "Side Brush fully reset to 0%",
+                accessories: {
+                    "Brush Guard": "0% (still reset)",
+                    "Sensors": "0% (still reset)",
+                    "Side Brush": "0% ✅ RESET",
+                    "Mop Cloth": "80% (unchanged)",
+                    "Rolling Brush": "88% (unchanged)",
+                    "Filter": "93% (unchanged)"
+                },
+                color: "#238636"
+            }
+        ];
+
+        function base64ToHex(base64) {
+            const binary = atob(base64);
+            return Array.from(binary, byte => byte.charCodeAt(0).toString(16).padStart(2, '0')).join(' ');
+        }
+
+        function base64ToBytes(base64) {
+            const binary = atob(base64);
+            return Array.from(binary, byte => byte.charCodeAt(0));
+        }
+
+        function showAccessoryMapping() {
+            let html = `
+                <div class="analysis">
+                    <h3>🎯 ACCESSORY LIFECYCLE MAPPING</h3>
+                    
+                    <div class="accessory-mapping">
+            `;
+
+            // Create accessory cards for each state
+            const accessories = ["Brush Guard", "Sensors", "Side Brush", "Mop Cloth", "Rolling Brush", "Filter"];
+            
+            accessories.forEach(accessory => {
+                const isReset = accessory === "Brush Guard" || accessory === "Sensors" || accessory === "Side Brush";
+                const cardClass = isReset ? "reset" : "unchanged";
+                
+                html += `
+                    <div class="accessory ${cardClass}">
+                        <strong>${accessory}</strong><br><br>
+                        <div style="font-size: 11px; line-height: 1.4;">
+                `;
+                
+                states.forEach((state, index) => {
+                    const status = state.accessories[accessory];
+                    html += `<div style="margin: 4px 0;"><span class="state-indicator state-${['original', 'reset1', 'reset2', 'final'][index]}"></span>${state.name}: ${status}</div>`;
+                });
+                
+                html += `
+                        </div>
+                    </div>
+                `;
+            });
+
+            html += `
+                    </div>
+                    
+                    <div style="background: #0d1117; padding: 15px; border-radius: 6px; margin: 20px 0;">
+                        <h4>🔍 KEY FINDINGS:</h4>
+                        <ul style="line-height: 1.6;">
+                            <li><strong>Protocol Structure:</strong> Protobuf-encoded binary that shrinks when accessories are reset</li>
+                            <li><strong>Reset Pattern:</strong> Data is completely removed from the structure, not just zeroed</li>
+                            <li><strong>Byte Reduction:</strong> 61 → 59 → 57 → 55 bytes as accessories are reset</li>
+                            <li><strong>Unaffected Items:</strong> Mop Cloth, Rolling Brush, and Filter remain constant</li>
+                            <li><strong>Reset Sequence:</strong> Brush Guard & Sensors → Side Brush → (Mop/Rolling/Filter pending)</li>
+                        </ul>
+                    </div>
+                </div>
+            `;
+
+            document.getElementById('results').innerHTML = html;
+        }
+
+        function compareAllStates() {
+            let html = `
+                <div class="analysis">
+                    <h3>⚡ COMPLETE STATE COMPARISON</h3>
+                    
+                    <table class="comparison-table">
+                        <tr>
+                            <th>State</th>
+                            <th>Size</th>
+                            <th>Hex Preview (first 20 bytes)</th>
+                            <th>Changes</th>
+                            <th>Reset Items</th>
+                        </tr>
+            `;
+
+            states.forEach((state, index) => {
+                const bytes = base64ToBytes(state.data);
+                const hexPreview = bytes.slice(0, 20).map(b => b.toString(16).padStart(2, '0')).join(' ');
+                
+                let resetItems = [];
+                Object.entries(state.accessories).forEach(([key, value]) => {
+                    if (value.includes('RESET') || value.includes('0%')) {
+                        resetItems.push(key);
+                    }
+                });
+
+                const changeCount = index > 0 ? calculateChanges(states[index-1].data, state.data) : 0;
+
+                html += `
+                    <tr>
+                        <td style="background: ${state.color}20; border-left: 4px solid ${state.color};">
+                            <div class="state-indicator" style="background: ${state.color};"></div>
+                            <strong>${state.name}</strong><br>
+                            <small>${state.description}</small>
+                        </td>
+                        <td><strong>${bytes.length}</strong> bytes</td>
+                        <td style="font-family: monospace; font-size: 10px;">${hexPreview}...</td>
+                        <td>${changeCount > 0 ? `${changeCount} bytes changed` : 'Initial state'}</td>
+                        <td>${resetItems.length > 0 ? resetItems.join(', ') : 'None'}</td>
+                    </tr>
+                `;
+            });
+
+            html += `
+                    </table>
+
+                    <h4>📊 BYTE-LEVEL ANALYSIS:</h4>
+                    <div style="background: #21262d; padding: 15px; border-radius: 6px; font-family: monospace; font-size: 10px; max-height: 400px; overflow-y: auto;">
+            `;
+
+            // Show detailed byte comparison for the most significant change
+            const originalBytes = base64ToBytes(states[0].data);
+            const finalBytes = base64ToBytes(states[3].data);
+
+            html += '<strong>ORIGINAL → FINAL (Major Changes):</strong><br><br>';
+            
+            const maxLen = Math.max(originalBytes.length, finalBytes.length);
+            for (let i = 0; i < maxLen; i++) {
+                const orig = originalBytes[i];
+                const final = finalBytes[i];
+                
+                if (orig !== final) {
+                    const origHex = orig !== undefined ? orig.toString(16).padStart(2, '0') : 'XX';
+                    const finalHex = final !== undefined ? final.toString(16).padStart(2, '0') : 'XX';
+                    html += `Pos ${i.toString().padStart(2, '0')}: ${origHex} → ${finalHex} (${orig || 0} → ${final || 0})<br>`;
+                }
+            }
+
+            html += `
+                    </div>
+                </div>
+            `;
+
+            document.getElementById('results').innerHTML = html;
+        }
+
+        function calculateChanges(data1, data2) {
+            const bytes1 = base64ToBytes(data1);
+            const bytes2 = base64ToBytes(data2);
+            const maxLen = Math.max(bytes1.length, bytes2.length);
+            
+            let changes = 0;
+            for (let i = 0; i < maxLen; i++) {
+                if (bytes1[i] !== bytes2[i]) changes++;
+            }
+            return changes;
+        }
+
+        function analyzeProtocol() {
+            let html = `
+                <div class="analysis">
+                    <h3>🧬 COMPREHENSIVE PROTOCOL ANALYSIS</h3>
+                    
+                    <div style="background: #0d1117; padding: 20px; border-radius: 8px; margin: 20px 0;">
+                        <h4>📋 SUMMARY FINDINGS:</h4>
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin: 15px 0;">
+                            
+                            <div style="background: #21262d; padding: 15px; border-radius: 6px; border: 1px solid #30363d;">
+                                <strong style="color: #ffa657;">Protocol Structure</strong><br><br>
+                                • Format: Protobuf binary encoding<br>
+                                • Compression: Variable-length encoding<br>
+                                • Behavior: Data removal on reset<br>
+                                • Size range: 55-61 bytes
+                            </div>
+                            
+                            <div style="background: #21262d; padding: 15px; border-radius: 6px; border: 1px solid #30363d;">
+                                <strong style="color: #ffa657;">Reset Mechanics</strong><br><br>
+                                • Method: Complete data removal<br>
+                                • Not zeroing: Actual structure change<br>
+                                • Sequential: One accessory at a time<br>
+                                • Persistent: Changes remain stable
+                            </div>
+                            
+                            <div style="background: #21262d; padding: 15px; border-radius: 6px; border: 1px solid #30363d;">
+                                <strong style="color: #ffa657;">Accessory Order</strong><br><br>
+                                1. Brush Guard (Manual reset)<br>
+                                2. Sensors (Simultaneous)<br>
+                                3. Side Brush (Manual reset)<br>
+                                4. Mop Cloth (Pending)<br>
+                                5. Rolling Brush (Pending)<br>
+                                6. Filter (Pending)
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style="background: #0f2419; border: 1px solid #238636; padding: 15px; border-radius: 6px; margin: 15px 0;">
+                        <strong style="color: #238636;">🎯 NEXT RECOMMENDED EXPERIMENTS:</strong><br><br>
+                        1. Reset <strong>Mop Cloth</strong> (currently 80%) to isolate its encoding pattern<br>
+                        2. Reset <strong>Rolling Brush</strong> (currently 88%) to confirm structure<br>
+                        3. Reset <strong>Filter</strong> (currently 93%) to complete the mapping<br>
+                        4. Document the byte positions for each accessory type<br>
+                        5. Create a complete decoding algorithm
+                    </div>
+
+                    <div style="background: #2d1014; border: 1px solid #da3633; padding: 15px; border-radius: 6px; margin: 15px 0;">
+                        <strong style="color: #da3633;">⚠️ TECHNICAL IMPLICATIONS:</strong><br><br>
+                        • The protocol doesn't use fixed-position fields<br>
+                        • Each accessory appears to be a separate protobuf message<br>
+                        • Reset = complete message removal, not value modification<br>
+                        • Reverse engineering requires complete reset cycle<br>
+                        • Custom integration needs to parse variable-length structures
+                    </div>
+                </div>
+            `;
+
+            document.getElementById('results').innerHTML = html;
+        }
+
+        // Auto-run accessory mapping on load
+        window.onload = function() {
+            showAccessoryMapping();
+        };
+    </script>
+</body>
+</html>
