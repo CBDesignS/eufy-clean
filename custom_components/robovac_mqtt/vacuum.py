@@ -13,8 +13,6 @@ from .constants.state import (EUFY_CLEAN_CLEAN_SPEED,
                               EUFY_CLEAN_NOVEL_CLEAN_SPEED)
 from .controllers.MqttConnect import MqttConnect
 from .EufyClean import EufyClean
-# Battery sensor is now handled by the sensor platform
-
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -24,7 +22,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
 
-    """Initialize my test integration 2 config entry."""
+    """Initialize robovac vacuum config entry."""
 
     for device_id, device in hass.data[DOMAIN][DEVICES].items():
         _LOGGER.info("Adding vacuum %s", device_id)
@@ -78,7 +76,7 @@ class RoboVacMQTTEntity(StateVacuumEntity):
         if not self._state:
             return None
 
-        state = self._state.lower()
+        state = self._state.lower() if isinstance(self._state, str) else str(self._state).lower()
 
         if state in ("docked", "charging"):
             return VacuumActivity.DOCKED
@@ -93,58 +91,127 @@ class RoboVacMQTTEntity(StateVacuumEntity):
         elif state in ("idle", "standby"):
             return VacuumActivity.IDLE
         else:
-            return None
+            return VacuumActivity.IDLE
 
     @property
     def extra_state_attributes(self):
-        return {
+        attrs = {
             "battery_level": self._attr_battery_level,
             "fan_speed": self._attr_fan_speed,
             "status": self._state,
         }
+        
+        # Add water tank level if available
+        if hasattr(self.vacuum, 'get_water_tank_level'):
+            try:
+                # Get water tank level synchronously for display
+                water_level = getattr(self.vacuum, '_last_water_tank_level', None)
+                if water_level is not None:
+                    attrs["water_tank_level"] = water_level
+            except Exception:
+                pass
+        
+        # Add accessories status if available
+        if hasattr(self.vacuum, 'get_accessories_data'):
+            try:
+                accessories = self.vacuum.get_accessories_data()
+                if accessories:
+                    attrs["accessories_status"] = {
+                        name: data.get('percentage', 0) 
+                        for name, data in accessories.items()
+                    }
+            except Exception:
+                pass
+        
+        return attrs
 
     async def pushed_update_handler(self):
         await self.update_entity_values()
         self.async_write_ha_state()
 
     async def update_entity_values(self):
-        self._attr_battery_level = await self.vacuum.get_battery_level()
-        self._state = await self.vacuum.get_work_status()
-
         try:
-            fan_speed = await self.vacuum.get_clean_speed()
-            if isinstance(fan_speed, str):
-                self._attr_fan_speed = fan_speed.lower()
-            elif isinstance(fan_speed, int):
-                self._attr_fan_speed = str(fan_speed)
-            else:
-                self._attr_fan_speed = None
-        except Exception as e:
-            _LOGGER.warning("Failed to get fan speed: %s", e)
-            self._attr_fan_speed = None
+            # Update battery level
+            self._attr_battery_level = await self.vacuum.get_battery_level()
+            
+            # Update work status
+            self._state = await self.vacuum.get_work_status()
 
-        _LOGGER.debug("Vacuum state: %s", self._state)
+            # Update fan speed
+            try:
+                fan_speed = await self.vacuum.get_clean_speed()
+                if isinstance(fan_speed, str):
+                    self._attr_fan_speed = fan_speed.lower()
+                elif isinstance(fan_speed, int):
+                    self._attr_fan_speed = str(fan_speed)
+                else:
+                    self._attr_fan_speed = None
+            except Exception as e:
+                _LOGGER.warning("Failed to get fan speed: %s", e)
+                self._attr_fan_speed = None
+
+            # Cache water tank level for extra_state_attributes
+            if hasattr(self.vacuum, 'get_water_tank_level'):
+                try:
+                    water_level = await self.vacuum.get_water_tank_level()
+                    self.vacuum._last_water_tank_level = water_level
+                except Exception as e:
+                    _LOGGER.debug("Failed to get water tank level: %s", e)
+
+            _LOGGER.debug("Vacuum state updated: %s (battery: %s%%)", self._state, self._attr_battery_level)
+
+        except Exception as e:
+            _LOGGER.error("Error updating vacuum entity values: %s", e)
+            self._attr_available = False
 
     async def async_return_to_base(self, **kwargs):
-        await self.vacuum.go_home()
+        try:
+            await self.vacuum.go_home()
+        except Exception as e:
+            _LOGGER.error("Failed to return to base: %s", e)
 
     async def async_start(self, **kwargs):
-        await self.vacuum.auto_clean()
+        try:
+            await self.vacuum.auto_clean()
+        except Exception as e:
+            _LOGGER.error("Failed to start cleaning: %s", e)
 
     async def async_pause(self, **kwargs):
-        await self.vacuum.pause()
+        try:
+            await self.vacuum.pause()
+        except Exception as e:
+            _LOGGER.error("Failed to pause: %s", e)
 
     async def async_stop(self, **kwargs):
-        await self.vacuum.stop()
+        try:
+            await self.vacuum.stop()
+        except Exception as e:
+            _LOGGER.error("Failed to stop: %s", e)
 
     async def async_clean_spot(self, **kwargs):
-        await self.vacuum.spot_clean()
+        try:
+            await self.vacuum.spot_clean()
+        except Exception as e:
+            _LOGGER.error("Failed to start spot clean: %s", e)
 
     async def async_set_fan_speed(self, fan_speed: str, **kwargs):
-        if fan_speed not in EUFY_CLEAN_CLEAN_SPEED:
-            raise ValueError(f"Invalid fan speed: {fan_speed}")
-        enum_value = next(x for x in EUFY_CLEAN_CLEAN_SPEED if x.value == fan_speed)
-        await self.vacuum.set_clean_speed(enum_value)
+        try:
+            if fan_speed not in [speed.lower() for speed in EUFY_CLEAN_NOVEL_CLEAN_SPEED]:
+                raise ValueError(f"Invalid fan speed: {fan_speed}")
+            
+            # Find the corresponding enum value
+            enum_value = None
+            for speed in EUFY_CLEAN_CLEAN_SPEED:
+                if speed.value.lower() == fan_speed.lower():
+                    enum_value = speed
+                    break
+            
+            if enum_value:
+                await self.vacuum.set_clean_speed(enum_value)
+            else:
+                _LOGGER.error("Could not find enum value for fan speed: %s", fan_speed)
+        except Exception as e:
+            _LOGGER.error("Failed to set fan speed: %s", e)
 
     async def async_send_command(
         self,
@@ -152,16 +219,19 @@ class RoboVacMQTTEntity(StateVacuumEntity):
         params: dict | list | None = None,
         **kwargs,
     ) -> None:
-        if command == "scene_clean":
-            if not params or not isinstance(params, dict) or "scene" not in params:
-                raise ValueError("params[scene] is required for scene_clean command")
-            scene = params["scene"]
-            await self.vacuum.scene_clean(scene)
-        elif command == "room_clean":
-            if not params or not isinstance(params, dict) or not isinstance(params.get("rooms"), list):
-                raise ValueError("params[rooms] is required for room_clean command")
-            rooms = [int(r) for r in params['rooms']]
-            map_id = int(params.get("map_id", 0))
-            await self.vacuum.room_clean(rooms, map_id)
-        else:
-            raise NotImplementedError(f"Command {command} not implemented")
+        try:
+            if command == "scene_clean":
+                if not params or not isinstance(params, dict) or "scene" not in params:
+                    raise ValueError("params[scene] is required for scene_clean command")
+                scene = params["scene"]
+                await self.vacuum.scene_clean(scene)
+            elif command == "room_clean":
+                if not params or not isinstance(params, dict) or not isinstance(params.get("rooms"), list):
+                    raise ValueError("params[rooms] is required for room_clean command")
+                rooms = [int(r) for r in params['rooms']]
+                map_id = int(params.get("map_id", 0))
+                await self.vacuum.room_clean(rooms, map_id)
+            else:
+                raise NotImplementedError(f"Command {command} not implemented")
+        except Exception as e:
+            _LOGGER.error("Failed to send command %s: %s", command, e)
