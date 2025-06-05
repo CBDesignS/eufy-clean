@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import logging
 from typing import Any, Callable
 
@@ -17,7 +18,18 @@ from ..proto.cloud.error_code_pb2 import ErrorCode
 from ..proto.cloud.work_status_pb2 import WorkStatus
 from ..utils import decode, encode, encode_message
 from .Base import Base
-from ..accessory_decoder import AccessoryDecoder
+
+# SAFE: Only import if available, don't break if missing
+try:
+    from ..accessory_decoder import AccessoryDecoder
+    ACCESSORY_DECODER_AVAILABLE = True
+    _LOGGER = logging.getLogger(__name__)
+    _LOGGER.debug("AccessoryDecoder imported successfully")
+except ImportError as e:
+    AccessoryDecoder = None
+    ACCESSORY_DECODER_AVAILABLE = False
+    _LOGGER = logging.getLogger(__name__)
+    _LOGGER.debug("AccessoryDecoder not available: %s", e)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -32,9 +44,20 @@ class SharedConnect(Base):
         self.config = {}
         self._update_listeners = []
         
-        # NEW: Add accessory decoder support
-        self.accessory_decoder = AccessoryDecoder()
-        self._accessories_data = {}
+        # ENHANCED: Add complete accessory decoder support with safe fallback
+        if ACCESSORY_DECODER_AVAILABLE:
+            try:
+                self.accessory_decoder = AccessoryDecoder()
+                self._accessories_data = {}
+                _LOGGER.info("Complete accessory decoder initialized successfully for device %s", self.device_id)
+            except Exception as e:
+                _LOGGER.warning("Accessory decoder failed to initialize for device %s: %s", self.device_id, e)
+                self.accessory_decoder = None
+                self._accessories_data = {}
+        else:
+            self.accessory_decoder = None
+            self._accessories_data = {}
+            _LOGGER.info("Accessory decoder not available - basic functionality only for device %s", self.device_id)
 
     _update_listeners: list[Callable[[], None]]
 
@@ -44,70 +67,101 @@ class SharedConnect(Base):
             for mapped_key in mapped_keys:
                 self.robovac_data[mapped_key] = value
 
-        # NEW: Look for accessories data
-        await self._process_accessories_data(dps)
+        # ENHANCED: Process complete accessories data if decoder is available
+        if self.accessory_decoder:
+            try:
+                await self._process_accessories_data(dps)
+            except Exception as e:
+                _LOGGER.debug("Error processing accessories data: %s", e)
 
         if self.debug_log:
             _LOGGER.debug('mappedData', self.robovac_data)
 
         await self.get_control_response()
         
-        # NEW: Call notify_listeners instead of directly calling listeners
+        # ENHANCED: Call notify_listeners for all sensor updates
         self.notify_listeners()
 
-    # NEW: Process accessories data from incoming MQTT data
+    # ENHANCED: Complete accessories data processing from incoming MQTT data
     async def _process_accessories_data(self, dps):
-        """Process accessories data from incoming MQTT messages."""
+        """Process complete accessories data from incoming MQTT messages."""
+        if not self.accessory_decoder:
+            return
+            
         accessories_raw = None
         
-        # Look for accessories data in the incoming data
-        # Based on your debug logs, look for various possible key patterns
+        # Look for accessories data in the incoming data with comprehensive patterns
         if isinstance(dps, dict):
             for key, value in dps.items():
                 key_str = str(key).lower()
-                # Check for common patterns that might contain accessories data
+                # Check for comprehensive patterns that might contain accessories data
                 if ('accessor' in key_str or 
                     'component' in key_str or 
                     'maintenance' in key_str or
                     'part' in key_str or
-                    'consumable' in key_str):
+                    'consumable' in key_str or
+                    'status' in key_str):
                     accessories_raw = value
-                    _LOGGER.debug("=== EXPLORING ACCESSORIES_STATUS ===")
-                    _LOGGER.debug("Raw accessories data: %s", accessories_raw)
+                    _LOGGER.debug("=== COMPLETE ACCESSORIES_STATUS DETECTED ===")
+                    _LOGGER.debug("Key: %s, Raw accessories data: %s", key, accessories_raw)
                     break
                 
                 # Also check if the value looks like base64 accessories data
-                # (your data starts with characters like 'PAo6', 'Ogo4', etc.)
+                # (comprehensive protocol analysis patterns)
                 if (isinstance(value, str) and 
                     len(value) > 30 and 
                     any(value.startswith(prefix) for prefix in ['PAo6', 'Ogo4', 'OAo2', 'Ngo0', 'NAoy', 'MgowC', 'MAou'])):
                     accessories_raw = value
-                    _LOGGER.debug("=== EXPLORING ACCESSORIES_STATUS ===")
-                    _LOGGER.debug("Raw accessories data: %s", accessories_raw)
+                    _LOGGER.debug("=== COMPLETE ACCESSORIES_STATUS BY PATTERN ===")
+                    _LOGGER.debug("Key: %s, Pattern-matched accessories data: %s", key, accessories_raw)
                     break
         
-        # If we found accessories data, decode it
+        # If we found accessories data, decode it with complete protocol analysis
         if accessories_raw and isinstance(accessories_raw, str):
             self.update_accessories_data(accessories_raw)
 
-    # NEW: Add accessory support methods
+    # ENHANCED: Complete accessory support methods
     def get_accessories_data(self) -> dict:
-        """Get decoded accessories data."""
+        """Get complete decoded accessories data with all 6 accessories."""
         return self._accessories_data
     
     def update_accessories_data(self, raw_accessories_data: str):
-        """Update accessories data from raw protobuf."""
+        """Update complete accessories data from raw protobuf with full protocol analysis."""
+        if not self.accessory_decoder:
+            return
+            
         try:
             if raw_accessories_data:
                 self._accessories_data = self.accessory_decoder.decode_accessories_data(raw_accessories_data)
-                _LOGGER.debug("Updated accessories data: %s", self._accessories_data)
+                
+                # Enhanced logging for complete accessory status
+                if self._accessories_data:
+                    _LOGGER.debug("=== COMPLETE ACCESSORIES UPDATE ===")
+                    for key, data in self._accessories_data.items():
+                        _LOGGER.debug("Accessory %s: %d%% (hours: %d/%d, reset: %s, needs_replacement: %s)", 
+                                    data.get('name', key),
+                                    data.get('percentage', 0),
+                                    data.get('hours_used', 0),
+                                    data.get('max_hours', 0),
+                                    data.get('is_reset', False),
+                                    data.get('needs_replacement', False))
+                    
+                    # Show protocol state information
+                    if hasattr(self.accessory_decoder, 'get_state_description'):
+                        state_desc = self.accessory_decoder.get_state_description()
+                        _LOGGER.debug("Protocol state: %s", state_desc)
+                    
+                    if hasattr(self.accessory_decoder, 'get_reset_accessories_count'):
+                        reset_count = self.accessory_decoder.get_reset_accessories_count()
+                        _LOGGER.debug("Reset accessories count: %d/6", reset_count)
+                        
         except Exception as e:
-            _LOGGER.error("Error updating accessories data: %s", e)
+            _LOGGER.error("Error updating complete accessories data: %s", e)
             self._accessories_data = {}
 
-    # NEW: Improved listener notification
+    # ENHANCED: Complete listener notification for all sensors
     def notify_listeners(self):
-        """Notify all listeners that data has been updated."""
+        """Notify all listeners that data has been updated - supports all sensor types."""
         for listener in self._update_listeners:
             try:
                 _LOGGER.debug(f'Calling listener {listener.__name__ if hasattr(listener, "__name__") else "anonymous"}')
@@ -124,7 +178,6 @@ class SharedConnect(Base):
         """Add a listener function to be called when data updates."""
         self._update_listeners.append(listener)
 
-    # NEW: Add remove_listener method for completeness
     def remove_listener(self, listener: Callable[[], None]):
         """Remove a listener function."""
         if listener in self._update_listeners:
@@ -262,8 +315,70 @@ class SharedConnect(Base):
     async def get_find_robot(self) -> bool:
         return bool(self.robovac_data['FIND_ROBOT'])
 
+    # ENHANCED: Complete battery level detection with Key 178 + safe fallback
     async def get_battery_level(self):
-        return int(self.robovac_data['BATTERY_LEVEL'])
+        """Complete enhanced battery level detection with Key 178 Byte 2 + safe fallback to original method."""
+        try:
+            # Method 1: Key 178, Byte 2 (real-time during cleaning) - ENHANCED PROTOCOL DETECTION
+            key178_data = self.robovac_data.get('178')
+            if key178_data:
+                try:
+                    binary_data = base64.b64decode(key178_data)
+                    if len(binary_data) >= 3:
+                        raw_value = binary_data[2]  # Byte 2 = Battery
+                        # CORRECTED Calibration: Raw 182 → 75% (calibration factor: 1.05)
+                        percentage = min(100, int((raw_value * 100 / 255) * 1.05))
+                        _LOGGER.debug("ENHANCED Battery from Key 178 Byte 2: %d (0x%02x) → %d%%", raw_value, raw_value, percentage)
+                        return percentage
+                except Exception as e:
+                    _LOGGER.debug("Error decoding Key 178 for battery: %s", e)
+            
+            # Method 2: Fallback to original method - PRESERVED
+            battery_level = int(self.robovac_data['BATTERY_LEVEL'])
+            _LOGGER.debug("Battery from original BATTERY_LEVEL field: %d%%", battery_level)
+            return battery_level
+        except Exception as e:
+            _LOGGER.error(f"Complete battery level error: {e}")
+            # Final fallback - return 0 instead of crashing
+            return 0
+
+    # ENHANCED: Complete water tank level detection with Key 178 + ACCESSORIES fallback
+    async def get_water_tank_level(self):
+        """Complete enhanced water tank level detection with Key 178 Byte 3 + ACCESSORIES fallback."""
+        try:
+            # Method 1: Key 178, Byte 3 (real-time during cleaning) - ENHANCED PROTOCOL DETECTION
+            key178_data = self.robovac_data.get('178')
+            if key178_data:
+                try:
+                    binary_data = base64.b64decode(key178_data)
+                    if len(binary_data) >= 4:
+                        raw_value = binary_data[3]  # Byte 3 = Water Tank
+                        # CORRECTED Calibration: Raw 206 → 83% (calibration factor: 1.027)
+                        percentage = min(100, int((raw_value * 100 / 255) * 1.027))
+                        _LOGGER.debug("ENHANCED Water tank from Key 178 Byte 3: %d (0x%02x) → %d%%", raw_value, raw_value, percentage)
+                        return percentage
+                except Exception as e:
+                    _LOGGER.debug("Error decoding Key 178 for water tank: %s", e)
+            
+            # Method 2: ACCESSORIES_STATUS, Byte 42 (summary when docked) - ENHANCED FALLBACK
+            accessories_data = self.robovac_data.get('ACCESSORIES_STATUS')
+            if accessories_data:
+                try:
+                    binary_data = base64.b64decode(accessories_data)
+                    if len(binary_data) == 49 and len(binary_data) > 42:
+                        raw_value = binary_data[42]
+                        percentage = min(95, int((raw_value * 100) / 255))
+                        _LOGGER.debug("ENHANCED Water tank from ACCESSORIES_STATUS Byte 42: %d (0x%02x) → %d%%", raw_value, raw_value, percentage)
+                        return percentage
+                except Exception as e:
+                    _LOGGER.debug("Error decoding ACCESSORIES_STATUS for water tank: %s", e)
+            
+            # No water tank data available
+            _LOGGER.debug("No water tank data available from any source")
+            return None
+        except Exception as e:
+            _LOGGER.debug(f"Complete water tank level error: {e}")
+            return None
 
     async def get_error_code(self):
         try:
