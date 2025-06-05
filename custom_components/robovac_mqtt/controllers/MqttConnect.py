@@ -109,7 +109,7 @@ class MqttConnect(SharedConnect):
         self.mqttClient.subscribe(f"cmd/eufy_home/{self.deviceModel}/{self.deviceId}/res")
 
     def on_message(self, client, userdata, msg: Message):
-        """Fixed: Properly handle async message processing from sync callback"""
+        """ENHANCED: Complete async message processing + comprehensive sensor data detection"""
         messageParsed = json.loads(msg.payload.decode())
         _LOGGER.debug(f"Received message on {msg.topic}: ", messageParsed)
         
@@ -117,7 +117,73 @@ class MqttConnect(SharedConnect):
             # Get the payload data
             payload_data = messageParsed.get('payload', {}).get('data')
             if payload_data:
-                # Schedule the async function to run in the event loop
+                # ENHANCED: Comprehensive sensor data detection for all protocols
+                if self.debugLog:
+                    # Look for Key 178 (battery + water tank data) - ENHANCED DETECTION
+                    if '178' in payload_data:
+                        _LOGGER.debug("=== COMPLETE KEY 178 DETECTED (BATTERY + WATER TANK) ===")
+                        _LOGGER.debug("Key 178 raw data: %s", payload_data['178'])
+                        
+                        # Enhanced: Decode and log the actual values for debugging
+                        try:
+                            import base64
+                            binary_data = base64.b64decode(payload_data['178'])
+                            if len(binary_data) >= 4:
+                                battery_raw = binary_data[2]
+                                water_raw = binary_data[3]
+                                battery_pct = min(100, int((battery_raw * 100 / 255) * 1.05))
+                                water_pct = min(100, int((water_raw * 100 / 255) * 1.027))
+                                _LOGGER.debug("Key 178 decoded - Battery: %d (0x%02x) → %d%%, Water: %d (0x%02x) → %d%%", 
+                                            battery_raw, battery_raw, battery_pct,
+                                            water_raw, water_raw, water_pct)
+                        except Exception as e:
+                            _LOGGER.debug("Error decoding Key 178: %s", e)
+                    
+                    # Look for comprehensive accessories status data - ENHANCED DETECTION
+                    accessories_found = False
+                    for key, value in payload_data.items():
+                        # Enhanced pattern matching for accessories data
+                        if (isinstance(value, str) and 
+                            len(value) > 30 and 
+                            any(value.startswith(prefix) for prefix in ['PAo6', 'Ogo4', 'OAo2', 'Ngo0', 'NAoy', 'MgowC', 'MAou'])):
+                            _LOGGER.debug("=== COMPLETE ACCESSORIES STATUS DETECTED ===")
+                            _LOGGER.debug("Key %s accessories data: %s", key, value)
+                            
+                            # Enhanced: Decode and log accessory protocol state
+                            try:
+                                import base64
+                                binary_data = base64.b64decode(value)
+                                data_length = len(binary_data)
+                                _LOGGER.debug("Accessories data length: %d bytes", data_length)
+                                
+                                # Map data length to protocol state
+                                length_states = {
+                                    61: "All accessories active (original state)",
+                                    59: "Brush Guard & Sensors reset",
+                                    57: "+ Side Brush partial reset",
+                                    55: "+ Side Brush complete reset", 
+                                    53: "+ Mop Cloth reset",
+                                    51: "+ Rolling Brush reset",
+                                    49: "All accessories reset (final state)"
+                                }
+                                state_desc = length_states.get(data_length, f"Unknown state ({data_length} bytes)")
+                                _LOGGER.debug("Protocol state: %s", state_desc)
+                                
+                            except Exception as e:
+                                _LOGGER.debug("Error decoding accessories data: %s", e)
+                            
+                            accessories_found = True
+                            break
+                    
+                    # Log if no accessories data found
+                    if not accessories_found:
+                        _LOGGER.debug("No accessories status data detected in this message")
+                    
+                    # Enhanced: Log all available keys for debugging
+                    available_keys = list(payload_data.keys())
+                    _LOGGER.debug("Available data keys: %s", available_keys)
+                
+                # Schedule the async function to run in the event loop - PRESERVED WORKING FUNCTIONALITY
                 if self._loop and not self._loop.is_closed():
                     asyncio.run_coroutine_threadsafe(
                         self._map_data(payload_data), 
