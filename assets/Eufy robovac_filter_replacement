@@ -1,0 +1,26 @@
+alias: Robovac Filter Critical - Replace Now
+description: Critical alert when filter has ≤10% life remaining
+triggers:
+  - entity_id: sensor.amp96x0e33100080_filter_remaining
+    below: 11
+    for:
+      minutes: 5
+    trigger: numeric_state
+conditions:
+  - condition: template
+    value_template: "{{ states('sensor.amp96x0e33100080_filter_remaining') != 'unknown' }}"
+actions:
+  - data:
+      title: "🔴 URGENT: Robovac Filter Critical"
+      message: >
+        Filter only has {{ states('sensor.amp96x0e33100080_filter_remaining')
+        }}% life remaining! Replace immediately for optimal performance. ({{
+        state_attr('sensor.amp96x0e33100080_filter_remaining', 'hours_used')
+        }}/{{ state_attr('sensor.amp96x0e33100080_filter_remaining',
+        'max_hours') }} hours used)
+      data:
+        tag: robovac_filter_critical
+        actions:
+          - action: ORDER_FILTER
+            title: Order Filter
+    action: notify.mobile_app_your_phone
