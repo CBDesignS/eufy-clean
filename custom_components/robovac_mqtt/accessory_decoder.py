@@ -100,11 +100,11 @@ class AccessoryDecoder:
         """
         accessories = {}
         
-        # Initialize all accessories as reset
+        # Initialize all accessories as reset (100% remaining)
         for key, config in self.ACCESSORY_CONFIGS.items():
             accessories[key] = {
                 'name': config['name'],
-                'percentage': 0,
+                'percentage': 100,  # Start at 100% (new/reset)
                 'hours_used': 0,
                 'max_hours': config['max_hours'],
                 'is_reset': True,
@@ -128,12 +128,21 @@ class AccessoryDecoder:
         
         return accessories
     
+    def _calculate_percentage_remaining(self, hours_used: int, max_hours: int) -> int:
+        """Calculate percentage remaining (100% = new, 0% = needs replacement)."""
+        if max_hours <= 0:
+            return 100
+        
+        # Calculate remaining percentage
+        percentage_remaining = max(0, min(100, int(((max_hours - hours_used) / max_hours) * 100)))
+        return percentage_remaining
+    
     def _get_original_state_data(self) -> Dict[str, Dict[str, Union[int, float, bool]]]:
-        """Get original state data with example values from your analysis."""
+        """Get original state data with countdown percentages from your analysis."""
         return {
             'brush_guard': {
                 'name': 'Brush Guard',
-                'percentage': 64,
+                'percentage': self._calculate_percentage_remaining(77, 120),  # 36% remaining
                 'hours_used': 77,
                 'max_hours': 120,
                 'is_reset': False,
@@ -142,7 +151,7 @@ class AccessoryDecoder:
             },
             'sensors': {
                 'name': 'Sensors',
-                'percentage': 71,
+                'percentage': self._calculate_percentage_remaining(25, 35),  # 29% remaining
                 'hours_used': 25,
                 'max_hours': 35,
                 'is_reset': False,
@@ -151,38 +160,38 @@ class AccessoryDecoder:
             },
             'side_brush': {
                 'name': 'Side Brush',
-                'percentage': 76,
+                'percentage': self._calculate_percentage_remaining(137, 180),  # 24% remaining
                 'hours_used': 137,
                 'max_hours': 180,
                 'is_reset': False,
-                'needs_replacement': False,
+                'needs_replacement': True,  # Below 30%
                 'icon': 'mdi:brush-variant'
             },
             'mop_cloth': {
                 'name': 'Mop Cloth',
-                'percentage': 80,
+                'percentage': self._calculate_percentage_remaining(145, 180),  # 19% remaining
                 'hours_used': 145,
                 'max_hours': 180,
                 'is_reset': False,
-                'needs_replacement': False,
+                'needs_replacement': True,  # Below 30%
                 'icon': 'mdi:water'
             },
             'rolling_brush': {
                 'name': 'Rolling Brush',
-                'percentage': 88,
+                'percentage': self._calculate_percentage_remaining(317, 360),  # 12% remaining
                 'hours_used': 317,
                 'max_hours': 360,
                 'is_reset': False,
-                'needs_replacement': False,
+                'needs_replacement': True,  # Below 30%
                 'icon': 'mdi:brush'
             },
             'filter': {
                 'name': 'Filter',
-                'percentage': 93,
+                'percentage': self._calculate_percentage_remaining(337, 360),  # 6% remaining
                 'hours_used': 337,
                 'max_hours': 360,
                 'is_reset': False,
-                'needs_replacement': True,  # Above 90%
+                'needs_replacement': True,  # Below 30%
                 'icon': 'mdi:air-filter'
             }
         }
@@ -196,21 +205,21 @@ class AccessoryDecoder:
         if data_length == 59:
             # Brush Guard & Sensors reset
             accessories['brush_guard']['is_reset'] = True
-            accessories['brush_guard']['percentage'] = 0
+            accessories['brush_guard']['percentage'] = 100  # Reset to 100%
             accessories['brush_guard']['hours_used'] = 0
             accessories['brush_guard']['needs_replacement'] = False
             accessories['sensors']['is_reset'] = True
-            accessories['sensors']['percentage'] = 0
+            accessories['sensors']['percentage'] = 100  # Reset to 100%
             accessories['sensors']['hours_used'] = 0
             accessories['sensors']['needs_replacement'] = False
         elif data_length == 57:
             # + Side Brush partial reset
             accessories['brush_guard']['is_reset'] = True
-            accessories['brush_guard']['percentage'] = 0
+            accessories['brush_guard']['percentage'] = 100
             accessories['brush_guard']['hours_used'] = 0
             accessories['brush_guard']['needs_replacement'] = False
             accessories['sensors']['is_reset'] = True
-            accessories['sensors']['percentage'] = 0
+            accessories['sensors']['percentage'] = 100
             accessories['sensors']['hours_used'] = 0
             accessories['sensors']['needs_replacement'] = False
             accessories['side_brush']['is_reset'] = True
@@ -224,11 +233,11 @@ class AccessoryDecoder:
         """Get data for progressive reset states where most accessories are reset."""
         accessories = {}
         
-        # All accessories start as reset
+        # All accessories start as reset (100% remaining)
         for key, config in self.ACCESSORY_CONFIGS.items():
             accessories[key] = {
                 'name': config['name'],
-                'percentage': 0,
+                'percentage': 100,  # Reset to 100% (new condition)
                 'hours_used': 0,
                 'max_hours': config['max_hours'],
                 'is_reset': True,
@@ -240,14 +249,14 @@ class AccessoryDecoder:
         if data_length >= 53:
             # Filter still has data
             accessories['filter']['is_reset'] = False
-            accessories['filter']['percentage'] = 93
+            accessories['filter']['percentage'] = self._calculate_percentage_remaining(337, 360)  # 6% remaining
             accessories['filter']['hours_used'] = 337
-            accessories['filter']['needs_replacement'] = True  # Above 90%
+            accessories['filter']['needs_replacement'] = True  # Very low
         elif data_length >= 51:
             # Rolling brush still has data
             accessories['rolling_brush']['is_reset'] = False
-            accessories['rolling_brush']['percentage'] = 88
+            accessories['rolling_brush']['percentage'] = self._calculate_percentage_remaining(317, 360)  # 12% remaining
             accessories['rolling_brush']['hours_used'] = 317
-            accessories['rolling_brush']['needs_replacement'] = False
+            accessories['rolling_brush']['needs_replacement'] = True  # Low
         
         return accessories
