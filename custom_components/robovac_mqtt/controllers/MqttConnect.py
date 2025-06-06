@@ -77,10 +77,7 @@ class MqttConnect(SharedConnect):
             self.mqttCredentials = mqttCredentials
             username = self.mqttCredentials['thing_name']
             client_id = f"android-{self.mqttCredentials['app_name']}-eufy_android_{self.openudid}_{self.mqttCredentials['user_id']}-{int(time.time() * 1000)}"
-            _LOGGER.debug('Setup MQTT Connection', {
-                'clientId': client_id,
-                'username': username,
-            })
+            _LOGGER.debug('Setup MQTT Connection')
             if self.mqttClient:
                 self.mqttClient.disconnect()
             # When calling a blocking function in your library code
@@ -102,88 +99,94 @@ class MqttConnect(SharedConnect):
         self.mqttClient.on_connect = self.on_connect
         self.mqttClient.on_message = self.on_message
         self.mqttClient.on_disconnect = self.on_disconnect
+        # Enhanced logging
+        if self.debugLog:
+            self.mqttClient.on_log = self.on_log
+
+    def on_log(self, client, userdata, level, buf):
+        """Enhanced MQTT logging for debugging"""
+        _LOGGER.debug(f"MQTT Log: {buf}")
 
     def on_connect(self, client, userdata, flags, rc):
-        _LOGGER.debug('Connected to MQTT')
-        _LOGGER.info(f"Subscribe to cmd/eufy_home/{self.deviceModel}/{self.deviceId}/res")
-        self.mqttClient.subscribe(f"cmd/eufy_home/{self.deviceModel}/{self.deviceId}/res")
+        _LOGGER.debug(f'MQTT Log: Received CONNACK ({rc}, {flags})')
+        _LOGGER.debug('=== MQTT CONNECTION ESTABLISHED ===')
+        _LOGGER.debug(f'Connection result code: {rc}')
+        _LOGGER.debug(f'Connection flags: {flags}')
+        
+        # Subscribe to the specific response topic
+        main_topic = f"cmd/eufy_home/{self.deviceModel}/{self.deviceId}/res"
+        _LOGGER.info(f"Subscribe to {main_topic}")
+        client.subscribe(main_topic)
+        
+        # Also subscribe to wildcard pattern to catch all device messages
+        wildcard_topic = f"cmd/eufy_home/{self.deviceModel}/{self.deviceId}/+"
+        _LOGGER.debug(f"Also subscribing to wildcard: {wildcard_topic}")
+        client.subscribe(wildcard_topic)
+        
+        # NEW: Subscribe to potential new topic patterns used by updated app
+        additional_patterns = [
+            f"device/{self.deviceId}/+",
+            f"eufy_home/{self.deviceModel}/{self.deviceId}/+", 
+            f"cmd/eufy_home/{self.deviceId}/+",
+            f"status/{self.deviceModel}/{self.deviceId}/+",
+            f"data/{self.deviceModel}/{self.deviceId}/+",
+            f"cmd/eufy_home/+/{self.deviceId}/+",
+            f"eufy_home/+/{self.deviceId}/+",
+            f"+/{self.deviceId}/+",
+            f"eufy_clean/{self.deviceModel}/{self.deviceId}/+",
+            f"robovac/{self.deviceModel}/{self.deviceId}/+"
+        ]
+        
+        for pattern in additional_patterns:
+            _LOGGER.debug(f"Subscribing to additional pattern: {pattern}")
+            client.subscribe(pattern)
 
     def on_message(self, client, userdata, msg: Message):
-        """ENHANCED: Complete async message processing + comprehensive sensor data detection"""
-        messageParsed = json.loads(msg.payload.decode())
-        _LOGGER.debug(f"Received message on {msg.topic}: ", messageParsed)
-        
+        """Enhanced message processing to handle new Android app protocol changes"""
         try:
-            # Get the payload data
-            payload_data = messageParsed.get('payload', {}).get('data')
-            if payload_data:
-                # ENHANCED: Comprehensive sensor data detection for all protocols
-                if self.debugLog:
-                    # Look for Key 178 (battery + water tank data) - ENHANCED DETECTION
-                    if '178' in payload_data:
-                        _LOGGER.debug("=== COMPLETE KEY 178 DETECTED (BATTERY + WATER TANK) ===")
-                        _LOGGER.debug("Key 178 raw data: %s", payload_data['178'])
-                        
-                        # Enhanced: Decode and log the actual values for debugging
-                        try:
-                            import base64
-                            binary_data = base64.b64decode(payload_data['178'])
-                            if len(binary_data) >= 4:
-                                battery_raw = binary_data[2]
-                                water_raw = binary_data[3]
-                                battery_pct = min(100, int((battery_raw * 100 / 255) * 1.05))
-                                water_pct = min(100, int((water_raw * 100 / 255) * 1.027))
-                                _LOGGER.debug("Key 178 decoded - Battery: %d (0x%02x) → %d%%, Water: %d (0x%02x) → %d%%", 
-                                            battery_raw, battery_raw, battery_pct,
-                                            water_raw, water_raw, water_pct)
-                        except Exception as e:
-                            _LOGGER.debug("Error decoding Key 178: %s", e)
-                    
-                    # Look for comprehensive accessories status data - ENHANCED DETECTION
-                    accessories_found = False
-                    for key, value in payload_data.items():
-                        # Enhanced pattern matching for accessories data
-                        if (isinstance(value, str) and 
-                            len(value) > 30 and 
-                            any(value.startswith(prefix) for prefix in ['PAo6', 'Ogo4', 'OAo2', 'Ngo0', 'NAoy', 'MgowC', 'MAou'])):
-                            _LOGGER.debug("=== COMPLETE ACCESSORIES STATUS DETECTED ===")
-                            _LOGGER.debug("Key %s accessories data: %s", key, value)
-                            
-                            # Enhanced: Decode and log accessory protocol state
-                            try:
-                                import base64
-                                binary_data = base64.b64decode(value)
-                                data_length = len(binary_data)
-                                _LOGGER.debug("Accessories data length: %d bytes", data_length)
-                                
-                                # Map data length to protocol state
-                                length_states = {
-                                    61: "All accessories active (original state)",
-                                    59: "Brush Guard & Sensors reset",
-                                    57: "+ Side Brush partial reset",
-                                    55: "+ Side Brush complete reset", 
-                                    53: "+ Mop Cloth reset",
-                                    51: "+ Rolling Brush reset",
-                                    49: "All accessories reset (final state)"
-                                }
-                                state_desc = length_states.get(data_length, f"Unknown state ({data_length} bytes)")
-                                _LOGGER.debug("Protocol state: %s", state_desc)
-                                
-                            except Exception as e:
-                                _LOGGER.debug("Error decoding accessories data: %s", e)
-                            
-                            accessories_found = True
-                            break
-                    
-                    # Log if no accessories data found
-                    if not accessories_found:
-                        _LOGGER.debug("No accessories status data detected in this message")
-                    
-                    # Enhanced: Log all available keys for debugging
-                    available_keys = list(payload_data.keys())
-                    _LOGGER.debug("Available data keys: %s", available_keys)
+            messageParsed = json.loads(msg.payload.decode())
+            _LOGGER.debug(f"MQTT Log: Received message on topic {msg.topic}")
+            
+            if self.debugLog:
+                _LOGGER.debug(f"Full message content: {messageParsed}")
+            
+            # Handle different message structures from new app
+            payload_data = None
+            
+            # Try different payload structures
+            if 'payload' in messageParsed:
+                if isinstance(messageParsed['payload'], str):
+                    # Payload might be JSON string
+                    try:
+                        payload_parsed = json.loads(messageParsed['payload'])
+                        payload_data = payload_parsed.get('data')
+                    except:
+                        pass
+                elif isinstance(messageParsed['payload'], dict):
+                    payload_data = messageParsed['payload'].get('data')
+            
+            # Fallback: check if data is directly in message
+            if not payload_data and 'data' in messageParsed:
+                payload_data = messageParsed['data']
                 
-                # Schedule the async function to run in the event loop - PRESERVED WORKING FUNCTIONALITY
+            # NEW: Check for alternative data structures from updated app
+            if not payload_data:
+                for alt_key in ['dps', 'properties', 'state', 'deviceData', 'status', 'params']:
+                    if alt_key in messageParsed:
+                        payload_data = messageParsed[alt_key]
+                        _LOGGER.debug(f"Found data in alternative key: {alt_key}")
+                        break
+            
+            if payload_data:
+                if self.debugLog:
+                    _LOGGER.debug("=== DEVICE API DATA FOUND ===")
+                    available_keys = list(payload_data.keys()) if isinstance(payload_data, dict) else []
+                    _LOGGER.debug(f"Device API data keys: {available_keys}")
+                    
+                    # Enhanced detection for all known data types
+                    self._debug_data_content(payload_data)
+                
+                # Process the data
                 if self._loop and not self._loop.is_closed():
                     asyncio.run_coroutine_threadsafe(
                         self._map_data(payload_data), 
@@ -191,10 +194,106 @@ class MqttConnect(SharedConnect):
                     )
                 else:
                     _LOGGER.warning("Event loop not available for message processing")
+            else:
+                _LOGGER.warning(f"No recognizable data found in message from {msg.topic}")
+                if self.debugLog:
+                    _LOGGER.debug(f"Message structure keys: {list(messageParsed.keys())}")
+                    
         except Exception as error:
-            _LOGGER.error('Could not parse data', exc_info=error)
+            _LOGGER.error(f'Could not parse MQTT message from {msg.topic}', exc_info=error)
+
+    def _debug_data_content(self, payload_data):
+        """Enhanced debugging for different data content types"""
+        if not isinstance(payload_data, dict):
+            _LOGGER.debug(f"Payload data is not dict, type: {type(payload_data)}")
+            return
+            
+        # Check for battery data (Key 178 or alternatives)
+        battery_keys = ['178', 'battery', 'batteryLevel', 'power', '150', '151']
+        for key in battery_keys:
+            if key in payload_data:
+                _LOGGER.debug(f"=== BATTERY DATA FOUND in key {key} ===")
+                _LOGGER.debug(f"Battery data: {payload_data[key]}")
+                
+                # Enhanced: Decode Key 178 if present
+                if key == '178' and isinstance(payload_data[key], str):
+                    try:
+                        import base64
+                        binary_data = base64.b64decode(payload_data[key])
+                        if len(binary_data) >= 4:
+                            battery_raw = binary_data[2]
+                            water_raw = binary_data[3]
+                            battery_pct = min(100, int((battery_raw * 100 / 255) * 1.05))
+                            water_pct = min(100, int((water_raw * 100 / 255) * 1.027))
+                            _LOGGER.debug("Key 178 decoded - Battery: %d (0x%02x) → %d%%, Water: %d (0x%02x) → %d%%", 
+                                        battery_raw, battery_raw, battery_pct,
+                                        water_raw, water_raw, water_pct)
+                    except Exception as e:
+                        _LOGGER.debug("Error decoding Key 178: %s", e)
+                
+        # Check for accessory data
+        accessory_found = False
+        for key, value in payload_data.items():
+            if isinstance(value, str) and len(value) > 20:
+                # Look for base64 encoded accessory data
+                if any(value.startswith(prefix) for prefix in ['PAo6', 'Ogo4', 'OAo2', 'Ngo0', 'NAoy', 'MgowC', 'MAou']):
+                    _LOGGER.debug(f"=== ACCESSORIES DATA FOUND in key {key} ===")
+                    _LOGGER.debug(f"Accessories data: {value[:50]}...") # Truncated for log clarity
+                    accessory_found = True
+                    
+                    # Enhanced: Decode and log accessory protocol state
+                    try:
+                        import base64
+                        binary_data = base64.b64decode(value)
+                        data_length = len(binary_data)
+                        _LOGGER.debug("Accessories data length: %d bytes", data_length)
+                        
+                        # Map data length to protocol state
+                        length_states = {
+                            61: "All accessories active (original state)",
+                            59: "Brush Guard & Sensors reset",
+                            57: "+ Side Brush partial reset",
+                            55: "+ Side Brush complete reset", 
+                            53: "+ Mop Cloth reset",
+                            51: "+ Rolling Brush reset",
+                            49: "All accessories reset (final state)"
+                        }
+                        state_desc = length_states.get(data_length, f"Unknown state ({data_length} bytes)")
+                        _LOGGER.debug("Protocol state: %s", state_desc)
+                        
+                    except Exception as e:
+                        _LOGGER.debug("Error decoding accessories data: %s", e)
+                    
+        if not accessory_found:
+            _LOGGER.debug("No accessories status data detected in this message")
+                
+        # Look for new data patterns from updated app
+        sensor_keys = ['sensors', 'components', 'parts', 'maintenance', 'consumables', 'accessories']
+        for key in sensor_keys:
+            if key in payload_data:
+                _LOGGER.debug(f"=== POTENTIAL SENSOR DATA in key {key} ===")
+                _LOGGER.debug(f"Data: {payload_data[key]}")
+                
+        # Check for numeric keys that might contain sensor data
+        numeric_keys = [k for k in payload_data.keys() if k.isdigit()]
+        if numeric_keys:
+            _LOGGER.debug(f"Available numeric keys: {sorted(numeric_keys, key=int)}")
+            
+            # Log data for keys that commonly contain sensor information
+            important_keys = ['150', '151', '152', '153', '154', '155', '156', '157', '158', '159', 
+                            '160', '161', '162', '163', '164', '165', '166', '167', '168', '169', 
+                            '170', '171', '172', '173', '174', '175', '176', '177', '178', '179', '180']
+            
+            for key in important_keys:
+                if key in payload_data:
+                    value = payload_data[key]
+                    if isinstance(value, str) and len(value) > 10:
+                        _LOGGER.debug(f"Key {key} (potential sensor data): {value[:30]}...")
+                    else:
+                        _LOGGER.debug(f"Key {key}: {value}")
 
     def on_disconnect(self, client, userdata, rc):
+        _LOGGER.debug(f"MQTT Log: Disconnected with result code {rc}")
         if rc != 0:
             _LOGGER.warning('Unexpected MQTT disconnection. Will auto-reconnect')
 
