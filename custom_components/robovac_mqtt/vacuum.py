@@ -1,3 +1,8 @@
+# vacuum.py v1.0 - Fixed for Home Assistant 2026.1/2026.8 deprecations
+# - Uses activity property instead of state
+# - Removed battery from vacuum (moved to sensor)
+# - Removed BATTERY feature flag
+
 import logging
 from typing import Literal
 
@@ -21,8 +26,7 @@ async def async_setup_entry(
     config_entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-
-    """Initialize my test integration 2 config entry."""
+    """Initialize vacuum entities."""
 
     for device_id, device in hass.data[DOMAIN][DEVICES].items():
         _LOGGER.info("Adding vacuum %s", device_id)
@@ -50,15 +54,16 @@ class RoboVacMQTTEntity(StateVacuumEntity):
             model=item.device_model,
         )
         self._state = None
-        self._attr_battery_level = None
         self._attr_fan_speed = None
+        # FIX: Remove battery_level attribute and BATTERY feature flag
+        # Battery is now handled by a separate sensor entity
         self._attr_supported_features = (
             VacuumEntityFeature.START
             | VacuumEntityFeature.PAUSE
             | VacuumEntityFeature.STOP
             | VacuumEntityFeature.STATUS
             | VacuumEntityFeature.STATE
-            | VacuumEntityFeature.BATTERY
+            # REMOVED: VacuumEntityFeature.BATTERY - deprecated
             | VacuumEntityFeature.FAN_SPEED
             | VacuumEntityFeature.RETURN_HOME
             | VacuumEntityFeature.SEND_COMMAND
@@ -71,42 +76,47 @@ class RoboVacMQTTEntity(StateVacuumEntity):
 
         item.add_listener(_threadsafe_update)
 
+    # FIX: Implement 'activity' property instead of 'state' property
     @property
     def activity(self) -> VacuumActivity | None:
+        """Return the activity state using VacuumActivity enum."""
         if not self._state:
             return None
 
-        state = self._state.lower()
+        state = self._state.lower() if isinstance(self._state, str) else str(self._state).lower()
 
-        if state in ("docked", "charging"):
+        if state in ("docked", "charging", "recharging"):
             return VacuumActivity.DOCKED
         elif state in ("cleaning", "auto_cleaning", "spot_cleaning"):
             return VacuumActivity.CLEANING
-        elif state in ("paused",):
+        elif state in ("paused", "pause"):
             return VacuumActivity.PAUSED
-        elif state in ("returning", "returning_to_base"):
+        elif state in ("returning", "returning_to_base", "recharge"):
             return VacuumActivity.RETURNING
         elif state in ("error", "stuck"):
             return VacuumActivity.ERROR
-        elif state in ("idle", "standby"):
+        elif state in ("idle", "standby", "sleeping", "finished"):
             return VacuumActivity.IDLE
         else:
-            return None
+            _LOGGER.debug("Unknown vacuum state: %s, defaulting to IDLE", self._state)
+            return VacuumActivity.IDLE
 
     @property
     def extra_state_attributes(self):
+        """Return extra state attributes."""
         return {
-            "battery_level": self._attr_battery_level,
             "fan_speed": self._attr_fan_speed,
             "status": self._state,
         }
 
     async def pushed_update_handler(self):
+        """Handle updates pushed from the vacuum."""
         await self.update_entity_values()
         self.async_write_ha_state()
 
     async def update_entity_values(self):
-        self._attr_battery_level = await self.vacuum.get_battery_level()
+        """Update entity values from the vacuum."""
+        # FIX: Don't update battery_level here - it's handled by sensor
         self._state = await self.vacuum.get_work_status()
 
         try:
@@ -163,4 +173,3 @@ class RoboVacMQTTEntity(StateVacuumEntity):
             await self.vacuum.room_clean(rooms, map_id)
         else:
             raise NotImplementedError(f"Command {command} not implemented")
-
