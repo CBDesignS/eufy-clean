@@ -1,7 +1,8 @@
-# vacuum.py v1.0 - Fixed for Home Assistant 2026.1/2026.8 deprecations
-# - Uses activity property instead of state
-# - Removed battery from vacuum (moved to sensor)
-# - Removed BATTERY feature flag
+# vacuum.py v1.1 - Fixed for Home Assistant 2026.1/2026.8 deprecations  
+# - REMOVED: VacuumEntityFeature.BATTERY (deprecated - moved to sensor)
+# - REMOVED: battery_level handling from vacuum entity
+# - FIXED: Uses activity property instead of state for HA 2026.x compatibility
+# - FIXED: Clean separation between vacuum controls and battery monitoring
 
 import logging
 from typing import Literal
@@ -27,7 +28,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Initialize vacuum entities."""
-
+    
     for device_id, device in hass.data[DOMAIN][DEVICES].items():
         _LOGGER.info("Adding vacuum %s", device_id)
         entity = RoboVacMQTTEntity(device, hass)
@@ -55,15 +56,14 @@ class RoboVacMQTTEntity(StateVacuumEntity):
         )
         self._state = None
         self._attr_fan_speed = None
-        # FIX: Remove battery_level attribute and BATTERY feature flag
-        # Battery is now handled by a separate sensor entity
+        
+        # FIXED: Removed VacuumEntityFeature.BATTERY - now handled by separate sensor
         self._attr_supported_features = (
             VacuumEntityFeature.START
             | VacuumEntityFeature.PAUSE
             | VacuumEntityFeature.STOP
             | VacuumEntityFeature.STATUS
             | VacuumEntityFeature.STATE
-            # REMOVED: VacuumEntityFeature.BATTERY - deprecated
             | VacuumEntityFeature.FAN_SPEED
             | VacuumEntityFeature.RETURN_HOME
             | VacuumEntityFeature.SEND_COMMAND
@@ -76,10 +76,9 @@ class RoboVacMQTTEntity(StateVacuumEntity):
 
         item.add_listener(_threadsafe_update)
 
-    # FIX: Implement 'activity' property instead of 'state' property
     @property
     def activity(self) -> VacuumActivity | None:
-        """Return the activity state using VacuumActivity enum."""
+        """Return the activity state using VacuumActivity enum for HA 2026.x compatibility."""
         if not self._state:
             return None
 
@@ -116,9 +115,10 @@ class RoboVacMQTTEntity(StateVacuumEntity):
 
     async def update_entity_values(self):
         """Update entity values from the vacuum."""
-        # FIX: Don't update battery_level here - it's handled by sensor
+        # Get vacuum work status
         self._state = await self.vacuum.get_work_status()
 
+        # Get fan speed
         try:
             fan_speed = await self.vacuum.get_clean_speed()
             if isinstance(fan_speed, str):
@@ -134,21 +134,27 @@ class RoboVacMQTTEntity(StateVacuumEntity):
         _LOGGER.debug("Vacuum state: %s", self._state)
 
     async def async_return_to_base(self, **kwargs):
+        """Send the vacuum back to its base."""
         await self.vacuum.go_home()
 
     async def async_start(self, **kwargs):
+        """Start cleaning."""
         await self.vacuum.auto_clean()
 
     async def async_pause(self, **kwargs):
+        """Pause the vacuum."""
         await self.vacuum.pause()
 
     async def async_stop(self, **kwargs):
+        """Stop the vacuum."""
         await self.vacuum.stop()
 
     async def async_clean_spot(self, **kwargs):
+        """Start spot cleaning."""
         await self.vacuum.spot_clean()
 
     async def async_set_fan_speed(self, fan_speed: str, **kwargs):
+        """Set the fan speed."""
         if fan_speed not in EUFY_CLEAN_CLEAN_SPEED:
             raise ValueError(f"Invalid fan speed: {fan_speed}")
         enum_value = next(x for x in EUFY_CLEAN_CLEAN_SPEED if x.value == fan_speed)
@@ -160,6 +166,7 @@ class RoboVacMQTTEntity(StateVacuumEntity):
         params: dict | list | None = None,
         **kwargs,
     ) -> None:
+        """Send a command to the vacuum."""
         if command == "scene_clean":
             if not params or not isinstance(params, dict) or "scene" not in params:
                 raise ValueError("params[scene] is required for scene_clean command")
