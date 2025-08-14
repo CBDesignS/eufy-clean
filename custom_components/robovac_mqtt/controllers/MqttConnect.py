@@ -1,14 +1,11 @@
-# MqttConnect.py v1.2 - FIXED: Removed blocking file I/O operations
-# - FIXED: Use in-memory certificates instead of writing to disk
-# - FIXED: Eliminates blocking file operations that break async event loop
-# - FIXED: Enhanced payload parsing for string/object formats
-# - FIXED: Better error handling and data processing logging
+# - MqttConnect.py v1.5 - COPIED exact working approach from data logger
+# - RESTORED: Original certificate file method that actually works
+# - REMOVED: All the overthinking SSL bullshit that didn't work
+# - FACT: Data logger works fine with file approach, just ignore warnings
 
 import asyncio
 import json
 import logging
-import ssl
-import tempfile
 import time
 from functools import partial
 from os import path
@@ -25,23 +22,25 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def get_blocking_mqtt_client(client_id: str, username: str, certificate_pem: str, private_key: str):
-    """Create MQTT client with in-memory certificates - FIXED: No file I/O"""
     client = mqtt.Client(
         client_id=client_id,
         transport='tcp',
     )
     client.username_pw_set(username)
 
-    # FIXED: Use in-memory SSL context instead of writing files
-    context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
-    context.check_hostname = False
-    context.verify_mode = ssl.CERT_REQUIRED
-    
-    # Load certificates from memory
-    context.load_cert_chain_from_memory(certificate_pem.encode(), private_key.encode())
-    context.load_default_certs()
-    
-    client.tls_set_context(context)
+    current_dir = path.dirname(path.abspath(__file__))
+    ca_path = path.join(current_dir, 'ca.pem')
+    key_path = path.join(current_dir, 'key.key')
+
+    with open(ca_path, 'w') as f:
+        f.write(certificate_pem)
+    with open(key_path, 'w') as f:
+        f.write(private_key)
+
+    client.tls_set(
+        certfile=path.abspath(ca_path),
+        keyfile=path.abspath(key_path),
+    )
     return client
 
 
@@ -56,10 +55,9 @@ class MqttConnect(SharedConnect):
         self.eufyCleanApi = eufyCleanApi
         self.mqttClient = None
         self.mqttCredentials = None
-        self._loop = None  # Store reference to the event loop
+        self._loop = None
 
     async def connect(self):
-        # Store the current event loop for later use
         self._loop = asyncio.get_running_loop()
         
         await self.eufyCleanApi.login({'mqtt': True})
@@ -88,16 +86,12 @@ class MqttConnect(SharedConnect):
         self.mqttClient.subscribe(f"cmd/eufy_home/{self.deviceModel}/{self.deviceId}/res")
 
     def on_message(self, client, userdata, msg: Message):
-        """FIXED: Properly handle async message processing and debug logging"""
         try:
             messageParsed = json.loads(msg.payload.decode())
-            # FIXED: Proper debug logging format
             _LOGGER.debug(f"Received message on {msg.topic}: %s", messageParsed)
             
-            # Get the payload data
             payload_data = messageParsed.get('payload', {})
             if isinstance(payload_data, str):
-                # If payload is a string, try to parse it as JSON
                 try:
                     payload_data = json.loads(payload_data)
                 except json.JSONDecodeError:
@@ -107,7 +101,6 @@ class MqttConnect(SharedConnect):
             data = payload_data.get('data')
             if data:
                 _LOGGER.debug(f"Processing MQTT data: %s", data)
-                # Schedule the async function to run in the event loop
                 if self._loop and not self._loop.is_closed():
                     asyncio.run_coroutine_threadsafe(
                         self._map_data(data), 
@@ -160,13 +153,12 @@ class MqttConnect(SharedConnect):
     async def set_clean_speed(self, speed):
         from ..proto.cloud.clean_param_pb2 import CleanParamRequest
         
-        # Speed mapping
         speed_map = {'quiet': 0, 'standard': 1, 'boost': 2, 'turbo': 3}
         speed_value = speed_map.get(speed.lower(), 1)
         
         command = CleanParamRequest()
-        command.clean_type = 1  # Auto clean
-        command.clean_extent = 1  # Full clean
+        command.clean_type = 1
+        command.clean_extent = 1
         command.clean_speed = speed_value
         await self.send_command(command)
 
@@ -184,21 +176,16 @@ class MqttConnect(SharedConnect):
         await self.send_command(command)
 
     async def zone_clean(self, zones):
-        # Implementation for zone cleaning
         _LOGGER.info("Zone clean not yet implemented")
 
     async def quick_clean(self, rooms):
-        # Implementation for quick clean
         _LOGGER.info("Quick clean not yet implemented")
 
     async def scene_clean(self, scene):
-        # Implementation for scene clean
         _LOGGER.info("Scene clean not yet implemented")
 
     async def set_clean_param(self, params):
-        # Implementation for setting clean parameters
         _LOGGER.info("Set clean param not yet implemented")
 
     async def set_map(self, map_id):
-        # Implementation for setting map
         _LOGGER.info("Set map not yet implemented")
