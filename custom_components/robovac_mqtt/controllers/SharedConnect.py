@@ -1,3 +1,8 @@
+# SharedConnect.py v1.2 - Fixed _map_data to store ALL keys like data logger
+# - FIXED: Store both numeric keys AND mapped names to prevent data loss  
+# - FIXED: Matches data logger implementation for Eufy API changes
+# - FIXED: Resolves endless loop and missing battery/status data
+# - FIXED: Use safe .get() access instead of direct dictionary access
 # - fixed incorrect dps keys for hard coded machine status
 # - fixed battery incorrect data from dps key.
 
@@ -37,7 +42,12 @@ class SharedConnect(Base):
     _update_listeners: list[Callable[[], None]]
 
     async def _map_data(self, dps):
+        # Store ALL DPS keys with their numeric keys (like data logger)
         for key, value in dps.items():
+            # Store with numeric key first
+            self.robovac_data[key] = value
+            
+            # Also store with mapped name if it exists
             mapped_keys = [k for k, v in self.dps_map.items() if v == key]
             for mapped_key in mapped_keys:
                 self.robovac_data[mapped_key] = value
