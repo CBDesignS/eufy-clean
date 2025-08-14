@@ -1,3 +1,5 @@
+# __init__.py v1.0 - Added sensor platform for battery
+
 import logging
 
 from homeassistant.config_entries import ConfigEntry
@@ -8,7 +10,8 @@ from .EufyClean import EufyClean
 
 from .constants.hass import DOMAIN, VACS, DEVICES
 
-PLATFORMS = [Platform.VACUUM, Platform.BUTTON]
+# FIX: Added Platform.SENSOR for battery sensor
+PLATFORMS = [Platform.VACUUM, Platform.BUTTON, Platform.SENSOR]
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -40,3 +43,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def update_listener(hass: HomeAssistant, entry: ConfigEntry):
     await hass.config_entries.async_reload(entry.entry_id)
+
+
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Unload a config entry."""
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    
+    if unload_ok:
+        # Clean up stored data
+        if DEVICES in hass.data[DOMAIN]:
+            hass.data[DOMAIN][DEVICES].clear()
+        if VACS in hass.data[DOMAIN]:
+            hass.data[DOMAIN][VACS].clear()
+    
+    return unload_ok
