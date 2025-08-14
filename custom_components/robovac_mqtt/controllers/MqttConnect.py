@@ -62,7 +62,7 @@ class MqttConnect(SharedConnect):
         # Store the current event loop for later use
         self._loop = asyncio.get_running_loop()
         
-        await self.eufyCleanApi.login()
+        await self.eufyCleanApi.login({'mqtt': True})
         self.mqttCredentials = await self.eufyCleanApi.getMqttCredentials()
         if self.mqttCredentials:
             _LOGGER.debug('MQTT Credentials found')
