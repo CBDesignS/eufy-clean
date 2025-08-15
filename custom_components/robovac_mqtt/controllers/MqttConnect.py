@@ -1,3 +1,7 @@
+# Revision 3 - Added wake-up nudge to request device status when idle
+# WHAT WE'RE TRYING: Device goes idle with new firmware and stops sending DPS data
+# FIX ATTEMPT: Send status request commands (100, 101, 102) to wake device
+# These are non-action commands that should just request current state/info
 # Revision 2 - Added updateDevice call to get initial DPS data like data logger does
 # Revision 1 - Fixed blocking calls using run_in_executor like data logger does
 # - MqttConnect.py v1.5 - COPIED exact working approach from data logger
@@ -65,7 +69,7 @@ class MqttConnect(SharedConnect):
         
         await self.eufyCleanApi.login({'mqtt': True})
         await self.connectMqtt(self.eufyCleanApi.mqtt_credentials)
-        # FIXED: Added updateDevice call to get initial DPS data like data logger does
+        # Try to get initial DPS data
         await self.updateDevice(True)
         await sleep(2000)
 
@@ -79,6 +83,29 @@ class MqttConnect(SharedConnect):
                 await self._map_data(device.get('dps'))
         except Exception as error:
             _LOGGER.error(f"Error updating device: {error}")
+
+    async def request_device_status(self):
+        """Send wake-up nudge to request device status when idle"""
+        try:
+            _LOGGER.debug("Sending wake-up nudge to request device status")
+            
+            # Send just ONE status request command that shouldn't trigger actions
+            # Command 100 is commonly used for status/info request
+            command = {
+                "cmd": "100",  # Common get status command
+                "device_sn": self.deviceId,
+                "protocol": 2,
+                "t": int(time.time())
+            }
+            
+            await self.sendCommand(command)
+            _LOGGER.debug("Wake-up nudge command sent")
+            
+            # Small delay to allow device to respond
+            await asyncio.sleep(1)
+            
+        except Exception as error:
+            _LOGGER.error(f"Error sending wake-up nudge: {error}")
 
     async def connectMqtt(self, mqttCredentials):
         if mqttCredentials:
@@ -113,6 +140,14 @@ class MqttConnect(SharedConnect):
         _LOGGER.debug('Connected to MQTT')
         _LOGGER.info(f"Subscribe to cmd/eufy_home/{self.deviceModel}/{self.deviceId}/res")
         self.mqttClient.subscribe(f"cmd/eufy_home/{self.deviceModel}/{self.deviceId}/res")
+        
+        # Send ONE wake-up nudge after subscribing to wake idle device
+        # This ensures MQTT is ready before battery/status is requested
+        if self._loop and not self._loop.is_closed():
+            asyncio.run_coroutine_threadsafe(
+                self.request_device_status(), 
+                self._loop
+            )
 
     def on_message(self, client, userdata, msg: Message):
         try:
