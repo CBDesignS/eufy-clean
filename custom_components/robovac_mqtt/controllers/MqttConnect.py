@@ -1,3 +1,4 @@
+# Revision 2 - Added updateDevice call to get initial DPS data like data logger does
 # Revision 1 - Fixed blocking calls using run_in_executor like data logger does
 # - MqttConnect.py v1.5 - COPIED exact working approach from data logger
 # - RESTORED: Original certificate file method that actually works
@@ -56,25 +57,49 @@ class MqttConnect(SharedConnect):
         self.eufyCleanApi = eufyCleanApi
         self.mqttClient = None
         self.mqttCredentials = None
-        self._loop = None
+        self._loop = None  # Store reference to the event loop
 
     async def connect(self):
+        # Store the current event loop for later use
         self._loop = asyncio.get_running_loop()
         
         await self.eufyCleanApi.login({'mqtt': True})
-        self.mqttCredentials = self.eufyCleanApi.mqtt_credentials
-        if self.mqttCredentials:
+        await self.connectMqtt(self.eufyCleanApi.mqtt_credentials)
+        # FIXED: Added updateDevice call to get initial DPS data like data logger does
+        await self.updateDevice(True)
+        await sleep(2000)
+
+    async def updateDevice(self, checkApiType=False):
+        """Get initial device DPS data from API - ADDED from data logger"""
+        try:
+            if not checkApiType:
+                return
+            device = await self.eufyCleanApi.getMqttDevice(self.deviceId)
+            if device and device.get('dps'):
+                await self._map_data(device.get('dps'))
+        except Exception as error:
+            _LOGGER.error(f"Error updating device: {error}")
+
+    async def connectMqtt(self, mqttCredentials):
+        if mqttCredentials:
             _LOGGER.debug('MQTT Credentials found')
+            self.mqttCredentials = mqttCredentials
+            username = self.mqttCredentials['thing_name']
+            client_id = f"android-{self.mqttCredentials['app_name']}-eufy_android_{self.openudid}_{self.mqttCredentials['user_id']}-{int(time.time() * 1000)}"
             _LOGGER.debug('Setup MQTT Connection')
-            # Fixed: Use run_in_executor to handle blocking operations
+            if self.mqttClient:
+                self.mqttClient.disconnect()
+            # Use run_in_executor to handle blocking operations
             loop = asyncio.get_running_loop()
             self.mqttClient = await loop.run_in_executor(None, partial(
                 get_blocking_mqtt_client,
-                client_id=f"android-{self.mqttCredentials['app_name']}-eufy_android_{self.openudid}_{self.mqttCredentials['user_id']}",
-                username=self.mqttCredentials['user_id'],
+                client_id=client_id,
+                username=username,
                 certificate_pem=self.mqttCredentials['certificate_pem'],
-                private_key=self.mqttCredentials['private_key']
+                private_key=self.mqttCredentials['private_key'],
             ))
+            self.mqttClient.connect_timeout = 30
+
             self.setupListeners()
             self.mqttClient.connect_async(self.mqttCredentials['endpoint_addr'], port=8883)
             self.mqttClient.loop_start()
@@ -125,23 +150,115 @@ class MqttConnect(SharedConnect):
         if rc != 0:
             _LOGGER.warning('Unexpected MQTT disconnection. Will auto-reconnect')
 
+    async def disconnect(self):
+        if self.mqttClient:
+            self.mqttClient.loop_stop()
+            self.mqttClient.disconnect()
+            self.mqttClient = None
+            _LOGGER.info('MQTT client disconnected')
+
+    async def sendCommand(self, command):
+        if not self.mqttClient or not self.mqttClient.is_connected():
+            _LOGGER.warning('MQTT client not connected')
+            return False
+            
+        topic = f"cmd/eufy_home/{self.deviceModel}/{self.deviceId}/req"
+        _LOGGER.debug(f"Sending command to {topic}: {command}")
+        
+        try:
+            result = self.mqttClient.publish(topic, json.dumps(command))
+            if result.rc == mqtt.MQTT_ERR_SUCCESS:
+                _LOGGER.debug('Command sent successfully')
+                return True
+            else:
+                _LOGGER.error(f'Failed to send command: {result.rc}')
+                return False
+        except Exception as e:
+            _LOGGER.error(f'Error sending command: {e}')
+            return False
+
+    async def go_home(self):
+        command = {
+            "account": self.mqttCredentials['user_id'],
+            "cmd": "30",
+            "content": {"value": "1"},
+            "device_sn": self.deviceId,
+            "protocol": 2,
+            "t": int(time.time())
+        }
+        return await self.sendCommand(command)
+
+    async def play(self):
+        command = {
+            "account": self.mqttCredentials['user_id'],
+            "cmd": "39",
+            "content": {"speed": "2", "value": "0"},
+            "device_sn": self.deviceId,
+            "protocol": 2,
+            "t": int(time.time())
+        }
+        return await self.sendCommand(command)
+
+    async def pause(self):
+        command = {
+            "account": self.mqttCredentials['user_id'],
+            "cmd": "144",
+            "content": {"value": "0"},
+            "device_sn": self.deviceId,
+            "protocol": 2,
+            "t": int(time.time())
+        }
+        return await self.sendCommand(command)
+
+    async def scene_clean(self, scene_id: int):
+        command = {
+            "account": self.mqttCredentials['user_id'],
+            "cmd": "1450",
+            "content": {"cleanId": str(scene_id)},
+            "device_sn": self.deviceId,
+            "protocol": 2,
+            "t": int(time.time())
+        }
+        return await self.sendCommand(command)
+
+    async def room_clean(self, map_id: int, room_ids: list):
+        rooms_str = ",".join([str(r) for r in room_ids])
+        command = {
+            "account": self.mqttCredentials['user_id'],
+            "cmd": "39",
+            "content": {
+                "cleanId": "8",
+                "cleanType": "3",
+                "mapId": str(map_id),
+                "roomIds": rooms_str,
+                "speed": "2",
+                "value": "0"
+            },
+            "device_sn": self.deviceId,
+            "protocol": 2,
+            "t": int(time.time())
+        }
+        return await self.sendCommand(command)
+
+    async def set_fan_speed(self, speed: int):
+        command = {
+            "account": self.mqttCredentials['user_id'],
+            "cmd": "1448",
+            "content": {"speed": str(speed)},
+            "device_sn": self.deviceId,
+            "protocol": 2,
+            "t": int(time.time())
+        }
+        return await self.sendCommand(command)
+
     async def send_command(self, command):
         encoded = command.SerializeToString()
         topic = f"cmd/eufy_home/{self.deviceModel}/{self.deviceId}/req"
         _LOGGER.debug(f"Sending command to {topic}: %s", command)
         self.mqttClient.publish(topic, encoded)
 
-    async def play(self):
-        await self.set_control(0)
-
-    async def pause(self):
-        await self.set_control(1)
-
     async def stop(self):
         await self.set_control(1)
-
-    async def go_home(self):
-        await self.set_control(2)
 
     async def find_robot(self):
         await self.set_control(6)
@@ -166,27 +283,11 @@ class MqttConnect(SharedConnect):
         command.clean_speed = speed_value
         await self.send_command(command)
 
-    async def room_clean(self, rooms):
-        from ..proto.cloud.control_pb2 import ModeCtrlRequest, SelectRoomsClean
-        
-        command = ModeCtrlRequest()
-        command.action = 2
-        
-        room_clean = SelectRoomsClean()
-        for room in rooms:
-            room_clean.rooms.append(room)
-        
-        command.sub_value = room_clean.SerializeToString()
-        await self.send_command(command)
-
     async def zone_clean(self, zones):
         _LOGGER.info("Zone clean not yet implemented")
 
     async def quick_clean(self, rooms):
         _LOGGER.info("Quick clean not yet implemented")
-
-    async def scene_clean(self, scene):
-        _LOGGER.info("Scene clean not yet implemented")
 
     async def set_clean_param(self, params):
         _LOGGER.info("Set clean param not yet implemented")
