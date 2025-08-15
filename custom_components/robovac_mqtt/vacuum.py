@@ -1,3 +1,4 @@
+# Revision 1 - Fixed fan_speed_list to use EUFY_CLEAN_NOVEL_CLEAN_SPEED directly like data logger
 # vacuum.py v1.2 - FIXED: Added back battery handling from data logger
 # - RESTORED: battery handling in pushed_update_handler (was incorrectly removed)
 # - FIXED: Uses activity property instead of state for HA 2026.x compatibility
@@ -69,7 +70,8 @@ class EufyVacuum(StateVacuumEntity):
         self._state = None
         self._attr_battery_level = None  # Keep for internal use even though feature removed
         self._attr_fan_speed = None
-        self._attr_fan_speed_list = list(EUFY_CLEAN_CLEAN_SPEED.keys()) + list(EUFY_CLEAN_NOVEL_CLEAN_SPEED.keys())
+        # FIXED: Use EUFY_CLEAN_NOVEL_CLEAN_SPEED directly like data logger does - it's already a list
+        self._attr_fan_speed_list = EUFY_CLEAN_NOVEL_CLEAN_SPEED
 
     async def async_added_to_hass(self) -> None:
         """Handle entity added to Home Assistant."""
