@@ -1,3 +1,4 @@
+# Revision 1 - Fixed blocking calls using run_in_executor like data logger does
 # - MqttConnect.py v1.5 - COPIED exact working approach from data logger
 # - RESTORED: Original certificate file method that actually works
 # - REMOVED: All the overthinking SSL bullshit that didn't work
@@ -65,12 +66,15 @@ class MqttConnect(SharedConnect):
         if self.mqttCredentials:
             _LOGGER.debug('MQTT Credentials found')
             _LOGGER.debug('Setup MQTT Connection')
-            self.mqttClient = get_blocking_mqtt_client(
-                f"android-{self.mqttCredentials['app_name']}-eufy_android_{self.openudid}_{self.mqttCredentials['user_id']}",
-                self.mqttCredentials['user_id'],
-                self.mqttCredentials['certificate_pem'],
-                self.mqttCredentials['private_key']
-            )
+            # Fixed: Use run_in_executor to handle blocking operations
+            loop = asyncio.get_running_loop()
+            self.mqttClient = await loop.run_in_executor(None, partial(
+                get_blocking_mqtt_client,
+                client_id=f"android-{self.mqttCredentials['app_name']}-eufy_android_{self.openudid}_{self.mqttCredentials['user_id']}",
+                username=self.mqttCredentials['user_id'],
+                certificate_pem=self.mqttCredentials['certificate_pem'],
+                private_key=self.mqttCredentials['private_key']
+            ))
             self.setupListeners()
             self.mqttClient.connect_async(self.mqttCredentials['endpoint_addr'], port=8883)
             self.mqttClient.loop_start()
