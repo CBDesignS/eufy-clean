@@ -85,27 +85,26 @@ class MqttConnect(SharedConnect):
             _LOGGER.error(f"Error updating device: {error}")
 
     async def request_device_status(self):
-        """Send wake-up nudge to request device status when idle"""
+        """Send protobuf wake-up nudge using ModeCtrlRequest"""
         try:
-            _LOGGER.debug("Sending wake-up nudge to request device status")
+            _LOGGER.debug("Sending protobuf wake-up nudge to request device status")
             
-            # Send just ONE status request command that shouldn't trigger actions
-            # Command 100 is commonly used for status/info request
-            command = {
-                "cmd": "100",  # Common get status command
-                "device_sn": self.deviceId,
-                "protocol": 2,
-                "t": int(time.time())
-            }
+            # Import the protobuf message
+            from ..proto.cloud.control_pb2 import ModeCtrlRequest
             
-            await self.sendCommand(command)
-            _LOGGER.debug("Wake-up nudge command sent")
+            # Create empty ModeCtrlRequest - no action set, just requesting status
+            request = ModeCtrlRequest()
+            # Empty request should prompt device to send current status
+            
+            # Send using the protobuf send_command method (not JSON sendCommand)
+            await self.send_command(request)
+            _LOGGER.debug("Protobuf wake-up nudge sent")
             
             # Small delay to allow device to respond
             await asyncio.sleep(1)
             
         except Exception as error:
-            _LOGGER.error(f"Error sending wake-up nudge: {error}")
+            _LOGGER.error(f"Error sending protobuf wake-up nudge: {error}")
 
     async def connectMqtt(self, mqttCredentials):
         if mqttCredentials:
